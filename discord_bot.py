@@ -86,7 +86,7 @@ async def on_ready():
         channel = discord_client.get_channel(channel_id)
         if channel:
             conversation_history = []
-            async for message in channel.history(limit=100):  # Adjust limit as needed
+            async for message in channel.history(limit=MAX_HISTORY_LENGTH):
                 if datetime.now(timezone.utc) - message.created_at <= TIME_LIMIT:
                     content_with_usernames = message.content
                     # Remove bot mention

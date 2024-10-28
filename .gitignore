@@ -3,3 +3,4 @@ privtoken.py
 __pycache__/
 active_conversations/
 msg/
+new_training_data/

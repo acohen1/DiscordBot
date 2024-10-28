@@ -1,10 +1,18 @@
 from flask import Flask, render_template
+from datetime import datetime, timezone
+import pytz
 import json
 import os
 
 HISTORY_DIR = "active_conversations" # Directory containing JSON files of conversation histories
 
 app = Flask(__name__)
+
+def format_timestamp(timestamp):
+    """Convert UTC timestamp to EST and format it nicely."""
+    utc_dt = datetime.fromisoformat(timestamp).replace(tzinfo=timezone.utc)
+    est_dt = utc_dt.astimezone(pytz.timezone("America/New_York"))
+    return est_dt.strftime("%b %d, %Y - %I:%M %p")
 
 def load_all_conversation_histories():
     """Load all conversation histories from JSON files in the active_conversations directory."""
@@ -16,8 +24,15 @@ def load_all_conversation_histories():
                 with open(file_path, "r") as f:
                     try:
                         data = json.load(f)
-                        channel_name = data.get("channel_name", filename)             # Default to filename if channel name is missing
-                        conversations[channel_name] = data.get("messages", [])[-10:]  # Load only the last 10 messages
+                        # Extract channel name and format timestamps
+                        channel_name = data.get("channel_name", filename)
+                        messages = data.get("messages", [])
+                        # Format timestamps and reverse order
+                        formatted_messages = [
+                            {**msg, "timestamp": format_timestamp(msg["timestamp"])}
+                            for msg in messages[-10:]
+                        ]
+                        conversations[channel_name] = formatted_messages
                     except json.JSONDecodeError:
                         conversations[filename] = [{"error": "Unable to decode JSON content."}]
     return conversations

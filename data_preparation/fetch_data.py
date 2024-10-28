@@ -1,3 +1,4 @@
+import os
 import discord
 from discord.ext import commands
 import asyncio
@@ -6,7 +7,9 @@ from privtoken import DISCORD_API_TOKEN
 
 TOKEN = DISCORD_API_TOKEN
 CHANNEL_IDS = [662531201097007121]
-SAVE_DIR = 'luh_crank_msg_history.json'
+SAVE_DIR = 'msg/luh_crank_msg_history.json'
+
+os.makedirs(os.path.dirname(SAVE_DIR), exist_ok=True)
 
 # Define intents
 intents = discord.Intents.default()

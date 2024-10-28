@@ -8,13 +8,17 @@ from privtoken import OPENAI_API_KEY
 
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-MESSAGE_HISTORY_FILE = 'luh_crank_msg_history.json'
-FINE_TUNE_DATA_FILE = 'fine_tune_data.jsonl'
-FLAGGED_MESSAGES_FILE = 'flagged_messages.jsonl'
+MESSAGE_HISTORY_FILE = 'msg/luh_crank_msg_history.json'
+FINE_TUNE_DATA_FILE = 'msg/fine_tune_data.jsonl'
+FLAGGED_MESSAGES_FILE = 'msg/flagged_messages.jsonl'
 ASSISTANT_USERNAMES = ['grumbo1', 'toe', 'mahik']
 EXCLUDED_USERNAMES = ['yungdopesniffer', 'panpanpanpanpanpan', 'tijmen957', 'yerr9937']
 CONVERSATION_GAP_MINUTES = 60
 CUSTOM_PROFANITY_LIST = [""]
+
+# Create directories if they don't exist
+os.makedirs(os.path.dirname(FINE_TUNE_DATA_FILE), exist_ok=True)
+os.makedirs(os.path.dirname(FLAGGED_MESSAGES_FILE), exist_ok=True)
 
 # Initialize the profanity filter with default and custom words
 profanity.load_censor_words()

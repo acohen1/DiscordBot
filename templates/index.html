@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Conversation Histories</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 2rem; }
+        .container { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; }
+        .conversation { border: 1px solid #ccc; border-radius: 8px; padding: 1rem; width: 300px; background-color: #f9f9f9; }
+        .message { padding: 10px; margin: 10px 0; border-radius: 8px; }
+        .user { background-color: #e1f5fe; text-align: left; }
+        .assistant { background-color: #e8f5e9; text-align: left; }
+        .timestamp { font-size: 0.85em; color: #777; }
+        h1 { text-align: center; color: #333; }
+        h2 { color: #444; text-align: center; font-size: 1.2em; margin-bottom: 0.5em; }
+    </style>
+</head>
+<body>
+    <h1>Conversation Histories</h1>
+    <p>Viewing the latest 10 messages per conversation. Refresh this page to see updates.</p>
+    <div class="container">
+        {% for channel_name, conversation_history in conversations.items() %}
+            <div class="conversation">
+                <h2>{{ channel_name }}</h2>
+                {% for msg in conversation_history %}
+                    <div class="message {{ msg['role'] }}">
+                        {% if msg['role'] == 'assistant' %}
+                            <strong>Gregg Limper:</strong> {{ msg['content'] }}<br>
+                        {% else %}
+                            <strong>{{ msg['content'].split(" says: ")[0] }}</strong>: {{ msg['content'].split(" says: ")[1] }}<br>
+                        {% endif %}
+                        <span class="timestamp">{{ msg['timestamp'] }}</span>
+                    </div>
+                {% endfor %}
+            </div>
+        {% endfor %}
+    </div>
+</body>
+</html>

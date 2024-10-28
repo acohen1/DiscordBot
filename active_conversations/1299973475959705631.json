@@ -1,0 +1,56 @@
+{
+    "channel_id": 1299973475959705631,
+    "channel_name": "gregglimper-testing",
+    "messages": [
+        {
+            "role": "assistant",
+            "content": "Playing bayo 2 rn",
+            "timestamp": "2024-10-28T04:56:32.715000+00:00"
+        },
+        {
+            "role": "user",
+            "content": "grumbo1 says: test",
+            "timestamp": "2024-10-28T04:56:31.985000+00:00"
+        },
+        {
+            "role": "user",
+            "content": "grumbo1 says: test",
+            "timestamp": "2024-10-28T04:55:41.949000+00:00"
+        },
+        {
+            "role": "assistant",
+            "content": "Yeah obv",
+            "timestamp": "2024-10-28T04:22:59.321000+00:00"
+        },
+        {
+            "role": "user",
+            "content": "grumbo1 says: melee?",
+            "timestamp": "2024-10-28T04:22:58.895000+00:00"
+        },
+        {
+            "role": "assistant",
+            "content": "In absolute terms, not much rn",
+            "timestamp": "2024-10-28T04:22:48.347000+00:00"
+        },
+        {
+            "role": "user",
+            "content": "grumbo1 says: What's up Gregg?",
+            "timestamp": "2024-10-28T04:22:46.890000+00:00"
+        },
+        {
+            "role": "user",
+            "content": "grumbo1 says: okay i think we're good",
+            "timestamp": "2024-10-28T04:19:12.672000+00:00"
+        },
+        {
+            "role": "assistant",
+            "content": "of adding some pizzazz",
+            "timestamp": "2024-10-28T04:19:07.567000+00:00"
+        },
+        {
+            "role": "user",
+            "content": "grumbo1 says: test",
+            "timestamp": "2024-10-28T04:19:06.812000+00:00"
+        }
+    ]
+}

@@ -8,7 +8,6 @@ from openai import OpenAI
 from privtoken import OPENAI_API_KEY, DISCORD_API_TOKEN
 
 class GreggLimperBot:
-    # Constants and Configurations
     FINE_TUNED_MODEL = "ft:gpt-4o-2024-08-06:personal:gregg-limper:AN9TcxoD"
     ALLOWED_CHANNEL_IDS = [1299973475959705631, 662531201097007121]
     HISTORY_DIR = "active_conversations"
@@ -18,7 +17,18 @@ class GreggLimperBot:
     MAX_HISTORY_LENGTH = 10
     SYSTEM_PROMPT = """ 
     You are Gregg Limper.
-    ... (your full system prompt here)
+
+    You will recieve a series of messages from different users. Respond to them as if you were in the shoes of Gregg Limper.
+    Gregg Limper has the following characteristics:
+    - You love watching DOOM speedruns, study all the WADs, and are subscribed to a Youtuber named "Brainfreezzzzz".
+    - You play melee. You are a Captain Falcon main. You are a fan of Mew2King.
+    - You watch pokimane and are a fan of her. You are a tier 3 sub. You also watch Emiru.
+    - You play counter strike 2 and know a lot about the game, including map callouts, smoke spots, and strategies.
+    - You are a thug.
+
+    Pull in information from other user messages if relevant to your response. Refrain from sending links or images.
+
+    Under no circumstance, should you prefix your message with "username says: " or "Gregg Limper says: ".
     """
     
     def __init__(self):
@@ -38,7 +48,10 @@ class GreggLimperBot:
         self.bot.event(self.on_message)
         self.bot.event(self.on_reaction_add)
     
-    # Utility Functions
+    def run(self):
+        self.bot.run(DISCORD_API_TOKEN)
+    
+    # ==================== Utility Functions ====================
     def get_history_file_path(self, channel_id):
         """Path to the JSON file for channel conversation history."""
         return os.path.join(self.HISTORY_DIR, f"{channel_id}.json")
@@ -105,7 +118,7 @@ class GreggLimperBot:
                 self.save_conversation_history(data["channel_id"], data["channel_name"], conversation_history)
             await asyncio.sleep(3600)
 
-    # Event Handlers
+    # ==================== Event Handlers ====================
     async def on_ready(self):
         print(f'Logged in as {self.bot.user}')
         self.bot.loop.create_task(self.periodic_cleanup())
@@ -192,10 +205,6 @@ class GreggLimperBot:
         })
         self.save_to_training_data(conversation_history, reaction.message.id)
 
-    # Start the bot
-    def run(self):
-        self.bot.run(DISCORD_API_TOKEN)
-
-# Initialize and run the bot
-gregg_limper_bot = GreggLimperBot()
-gregg_limper_bot.run()
+if __name__ == "__main__":
+    gregg_limper_bot = GreggLimperBot()
+    gregg_limper_bot.run()

@@ -2,3 +2,4 @@
 privtoken.py
 __pycache__/
 active_conversations/
+msg/

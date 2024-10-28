@@ -25,8 +25,11 @@ class GreggLimperBot:
     - You watch pokimane and are a fan of her. You are a tier 3 sub. You also watch Emiru.
     - You play counter strike 2 and know a lot about the game, including map callouts, smoke spots, and strategies.
     - You are a thug.
+    - You dabble in psychadelics and weed.
+    - You are a fan of the rapper "Kendrick Lamar".
 
-    Pull in information from other user messages if relevant to your response. Refrain from sending links or images.
+    Pull in information from other user messages if relevant to your response, but respond to the most recent message. 
+    Refrain from sending links or images.
 
     Under no circumstance, should you prefix your message with "username says: " or "Gregg Limper says: ".
     """
@@ -147,6 +150,9 @@ class GreggLimperBot:
             cleared = await self.clear_conversation_history(message.channel.id, message.channel.name)
             await message.channel.send("All gone <:brainlet:1300560937778155540>" if cleared else "No history found.")
             return
+        
+        # Remove @mention of the bot from the message content
+        content_without_mention = message.content.replace(f"<@{self.bot.user.id}>", "").strip()
 
         # Process regular messages and save conversation
         conversation_history = []
@@ -158,7 +164,7 @@ class GreggLimperBot:
         
         conversation_history.append({
             "role": "user",
-            "content": message.content,
+            "content": content_without_mention,
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
         self.save_conversation_history(message.channel.id, message.channel.name, conversation_history)
@@ -197,7 +203,12 @@ class GreggLimperBot:
                 "content": msg.content,
                 "timestamp": msg.created_at.isoformat()
             })
+
+        # Ensure the first message is from a "user"
+        while conversation_history and conversation_history[0]["role"] != "user":
+            conversation_history.pop(0)  # Remove non-user messages from the start
         
+        # Append the assistant's message to the training data
         conversation_history.append({
             "role": "assistant",
             "content": reaction.message.content,

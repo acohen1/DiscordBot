@@ -1,5 +1,6 @@
 import os
 import discord
+from discord.ext import commands
 import json
 from datetime import datetime, timedelta, timezone
 from openai import OpenAI
@@ -20,8 +21,11 @@ You will recieve a series of messages from different users. Respond to them as i
 Gregg Limper has the following characteristics:
 - You love watching DOOM speedruns, study all the WADs, and are subscribed to a Youtuber named "Brainfreezzzzz".
 - You play melee. You are a Captain Falcon main. You are a fan of Mew2King.
+- You watch pokimane and are a fan of her. You are a tier 3 sub. You also watch Emiru.
+- You play counter strike 2 and know a lot about the game, including map callouts, smoke spots, and strategies.
+- You are a thug.
 
-Pull in information from other user messages if relevant to your response.
+Pull in information from other user messages if relevant to your response. Refrain from sending links or images.
 
 Under no circumstance, should you prefix your message with "username says: " or "Gregg Limper says: ".
 """
@@ -34,7 +38,7 @@ os.makedirs(TRAINING_DATA_DIR, exist_ok=True)
 client = OpenAI(api_key=OPENAI_API_KEY)
 intents = discord.Intents.default()
 intents.message_content = True
-intents.reactions = True  # Enable reaction tracking
+intents.reactions = True
 discord_client = discord.Client(intents=intents)
 
 def get_history_file_path(channel_id):
@@ -54,15 +58,15 @@ def save_conversation_history(channel_id, channel_name, conversation_history):
     with open(file_path, "w") as f:
         json.dump(data, f, default=str, indent=4)
 
-def save_to_training_data(messages):
-    """Append a new entry to the training data JSON file."""
+def save_to_training_data(messages, message_id):
+    """Append a new entry to the training data JSON file if it doesn't already exist."""
     data_entry = {
+        "message_id": message_id,  # Track unique message ID to prevent duplicates
         "messages": [
-            {"role": msg["role"], "content": msg["content"]}
+            {"role": msg["role"], "content": msg["content"], "timestamp": msg["timestamp"]}
             for msg in messages
         ]
     }
-
     # Load existing training data or create a new list
     if os.path.exists(TRAINING_DATA_FILE):
         with open(TRAINING_DATA_FILE, "r") as f:
@@ -73,10 +77,26 @@ def save_to_training_data(messages):
     else:
         existing_data = []
 
+    # Check if this message ID is already in the training data
+    if any(entry.get("message_id") == message_id for entry in existing_data):
+        print(f"Message ID {message_id} is already saved in training data. Skipping duplicate.")
+        return  # Skip saving if the message ID already exists
+
     # Append the new entry and save back to JSON
     existing_data.append(data_entry)
     with open(TRAINING_DATA_FILE, "w") as f:
         json.dump(existing_data, f, indent=4)
+    print(f"Saved new message to training data: {data_entry['messages'][-1]['content']}")
+
+async def clear_conversation_history(channel_id, channel_name):
+    """Clear the conversation history for a specific channel without deleting the file."""
+    file_path = get_history_file_path(channel_id)
+    if os.path.exists(file_path):
+        # Write an empty JSON structure to clear out the content
+        with open(file_path, "w") as f:
+            json.dump({"channel_id": channel_id, "channel_name": channel_name, "messages": []}, f, indent=4)
+        return True
+    return False
 
 async def periodic_cleanup():
     """Clear old conversation histories periodically."""
@@ -126,6 +146,20 @@ async def on_message(message):
         return
     if message.channel.id not in ALLOWED_CHANNEL_IDS:
         return
+    
+    # Check for @GreggLimper /lobotomy command to clear conversation history
+    if (
+        message.content.startswith(f"<@{discord_client.user.id}>") and 
+        message.content.strip().endswith("/lobotomy")
+    ):
+        # Clear conversation history for the channel
+        cleared = await clear_conversation_history(message.channel.id, message.channel.name)
+        if cleared:
+            await message.channel.send("All gone <:brainlet:1300560937778155540>")
+            print(f"Conversation history cleared for channel: {message.channel.name}")
+        else:
+            print(f"No conversation history to clear for channel: {message.channel.name}")
+        return
 
     channel_id = message.channel.id
     content_with_usernames = message.content.replace(f"<@{discord_client.user.id}>", "").strip()
@@ -161,7 +195,7 @@ async def on_message(message):
                 model=FINE_TUNED_MODEL,
                 messages=messages_for_api,
                 max_tokens=450,
-                temperature=0.8,
+                temperature=0.85,
             )
             assistant_reply = response.choices[0].message.content.strip()
             conversation_history.append({"role": "assistant", "content": assistant_reply, "timestamp": datetime.now(timezone.utc).isoformat()})
@@ -200,10 +234,8 @@ async def on_reaction_add(reaction, user):
             "timestamp": message.created_at.isoformat()
         })
 
-        # Save the correctly formatted conversation
-        save_to_training_data(conversation_history)
-        print(f"Saved assistant message to training data: {message.content}")
-
-
+        # Save the conversation history to training data only if it's unique
+        save_to_training_data(conversation_history, message.id)
+    
 # Run the Discord bot
 discord_client.run(DISCORD_API_TOKEN)

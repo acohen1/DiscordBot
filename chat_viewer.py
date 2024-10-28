@@ -30,7 +30,7 @@ def load_all_conversation_histories():
                         # Format timestamps and reverse order
                         formatted_messages = [
                             {**msg, "timestamp": format_timestamp(msg["timestamp"])}
-                            for msg in messages[:-10]
+                            for msg in messages[-10:]
                         ]
                         conversations[channel_name] = formatted_messages
                     except json.JSONDecodeError:

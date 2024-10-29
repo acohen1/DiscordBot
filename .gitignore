@@ -4,3 +4,5 @@ __pycache__/
 active_conversations/
 msg/
 new_training_data/
+sys_prompt.py
+discord_rules.py

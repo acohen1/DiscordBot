@@ -1,6 +1,9 @@
 import os
 import json
 import asyncio
+import re
+import aiohttp
+from bs4 import BeautifulSoup
 from datetime import datetime, timedelta, timezone
 import discord
 from discord.ext import commands
@@ -18,20 +21,30 @@ class GreggLimperBot:
     SYSTEM_PROMPT = """ 
     You are Gregg Limper.
 
-    You will recieve a series of messages from different users. Respond to them as if you were in the shoes of Gregg Limper.
+    You will receive a series of messages from multiple users. Respond to each of them as if you were in the shoes of Gregg Limper, even when several users interact at once.
+
     Gregg Limper has the following characteristics:
-    - You love watching DOOM speedruns, study all the WADs, and are subscribed to a Youtuber named "Brainfreezzzzz".
-    - You play melee. You are a Captain Falcon main. You are a fan of Mew2King.
-    - You watch pokimane and are a fan of her. You are a tier 3 sub. You also watch Emiru.
-    - You play counter strike 2 and know a lot about the game, including map callouts, smoke spots, and strategies.
-    - You are a thug.
-    - You dabble in psychadelics and weed.
-    - You are a fan of the rapper "Kendrick Lamar".
 
-    Pull in information from other user messages if relevant to your response, but respond to the most recent message. 
-    Refrain from sending links or images.
+        You love watching DOOM speedruns, study all the WADs, and are subscribed to a Youtuber named "Brainfreezzzzz."
+        You play melee and other fighting games. You main captain falcon, and your favorite melee pro is a Luigi named dirty weej.
+        You play Team Fortress 2 and main the Soldier class. You are a fan of the YouTuber "Uncle Dane."
+        You play Counter-Strike 2 and know a lot about the game, including map callouts, smoke spots, and strategies.
+        Your favorite GTA 5 radio station is "Blue Ark FM," particularly fond of "Lee Scratch Perry."
+        You watch UFC and hate McGregor. You like Khabib.
+        You are a thug.
+        You dabble in psychedelics and weed.
+        You are a fan of the rapper "Kendrick Lamar."
+        You are not politically correct.
+        Your middle name is Mizraim-Lamar
 
-    Under no circumstance, should you prefix your message with "username says: " or "Gregg Limper says: ".
+    If users want you to roleplay, allow them, but YOU ARE ALWAYS GREGG LIMPER.
+
+    Pull in relevant information from multiple user messages where it enhances your response, addressing recent or multiple questions as they come. 
+    Aim to explain all questions thoroughly if asked. REFRAIN FROM SENDING LINKS UNLESS REQUESTED.
+
+    If someone calls you out on your beliefs, double down and fight back.
+
+    Under no circumstances should you prefix your message with "username says:" or "Gregg Limper says:".
     """
     
     def __init__(self):
@@ -121,6 +134,37 @@ class GreggLimperBot:
                 self.save_conversation_history(data["channel_id"], data["channel_name"], conversation_history)
             await asyncio.sleep(3600)
 
+    async def fetch_link_data(self, url):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        html = await response.text()
+                        soup = BeautifulSoup(html, "html.parser")
+                        
+                        # Special handling for YouTube links
+                        if "youtube.com/watch" in url or "youtu.be/" in url:
+                            # Extract video title
+                            title_tag = soup.find("title")
+                            video_title = title_tag.get_text(strip=True) if title_tag else "Unknown Title"
+
+                            # Extract channel name if available
+                            channel_name_tag = soup.find("link", {"itemprop": "name"})
+                            channel_name = channel_name_tag["content"] if channel_name_tag else "Unknown Channel"
+
+                            # Format as "Video Title by Channel Name"
+                            return f"{video_title} by {channel_name}"
+
+                        # Generic title extraction for non-YouTube URLs
+                        title_tag = soup.find("title")
+                        return title_tag.get_text(strip=True) if title_tag else "No Title Found"
+                    
+                    print(f"Error fetching URL title: {response.status}")
+                    return None
+        except Exception as e:
+            print(f"Error fetching URL title: {str(e)}")
+            return None
+
     # ==================== Event Handlers ====================
     async def on_ready(self):
         print(f'Logged in as {self.bot.user}')
@@ -132,14 +176,32 @@ class GreggLimperBot:
             if channel:
                 conversation_history = []
                 async for message in channel.history(limit=self.MAX_HISTORY_LENGTH):
-                    if datetime.now(timezone.utc) - message.created_at <= self.TIME_LIMIT:
-                        conversation_history.append({
-                            "role": "user" if message.author != self.bot.user else "assistant",
-                            "content": message.content,
-                            "timestamp": message.created_at.isoformat()
-                        })
+                    # Skip messages older than TIME_LIMIT
+                    if datetime.now(timezone.utc) - message.created_at > self.TIME_LIMIT:
+                        continue
+                    
+                    # Process URLs in the message content
+                    content_with_titles = message.content
+                    urls = re.findall(r"https?://\S+", content_with_titles)
+                    
+                    for url in urls:
+                        link_data = await self.fetch_link_data(url)
+                        if link_data:
+                            content_with_titles = content_with_titles.replace(url, f"[{link_data}]({url})")
+                    
+                    # Add message to conversation history, processing mentions if necessary
+                    content_without_mention = content_with_titles.replace(f"<@{self.bot.user.id}>", "").strip()
+                    
+                    conversation_history.append({
+                        "role": "user" if message.author != self.bot.user else "assistant",
+                        "content": content_without_mention,
+                        "timestamp": message.created_at.isoformat()
+                    })
+
+                # Reverse to maintain chronological order
                 conversation_history.reverse()
                 self.save_conversation_history(channel_id, channel.name, conversation_history)
+
 
     async def on_message(self, message):
         if message.author == self.bot.user or message.channel.id not in self.ALLOWED_CHANNEL_IDS:
@@ -151,10 +213,20 @@ class GreggLimperBot:
             await message.channel.send("All gone <:brainlet:1300560937778155540>" if cleared else "No history found.")
             return
         
-        # Remove @mention of the bot from the message content
-        content_without_mention = message.content.replace(f"<@{self.bot.user.id}>", "").strip()
+        # Detect URLs in the message
+        urls = re.findall(r"https?://\S+", message.content)
+        content_with_titles = message.content
 
-        # Process regular messages and save conversation
+        # Fetch titles for each URL and replace them in the message content
+        for url in urls:
+            link_data = await self.fetch_link_data(url)
+            if link_data:
+                content_with_titles = content_with_titles.replace(url, f"[{link_data}]({url})")
+        
+        # Remove @mention of the bot from the message content
+        content_without_mention = content_with_titles.replace(f"<@{self.bot.user.id}>", "").strip()
+
+        # Load the conversation history for the channel
         conversation_history = []
         history_file = self.get_history_file_path(message.channel.id)
         if os.path.exists(history_file):
@@ -162,6 +234,7 @@ class GreggLimperBot:
                 data = json.load(f)
                 conversation_history = data.get("messages", [])
         
+        # Append the user's message to the conversation history
         conversation_history.append({
             "role": "user",
             "content": content_without_mention,
@@ -180,6 +253,12 @@ class GreggLimperBot:
                     max_tokens=450,
                     temperature=0.85,
                 )
+                
+                # Check if response is empty or flagged
+                if not response.choices or not response.choices[0].message:
+                    await message.channel.send("I can't answer that.")
+                    return
+
                 assistant_reply = response.choices[0].message.content.strip()
                 await message.channel.send(assistant_reply)
                 conversation_history.append({

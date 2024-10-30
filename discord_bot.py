@@ -11,8 +11,7 @@ from datetime import datetime, timedelta, timezone
 import discord
 from openai import OpenAI
 from privtoken import OPENAI_API_KEY, DISCORD_API_TOKEN
-from discord_rules import RULES
-from sys_prompt import MAIN_SYS_PROMPT
+from sys_prompt import MAIN_SYS_PROMPT, RULES   #, USER_ADDED_RULES
 
 class GreggLimperBot:
     FINE_TUNED_MODEL = "ft:gpt-4o-2024-08-06:personal:gregg-limper:AN9TcxoD"
@@ -22,7 +21,7 @@ class GreggLimperBot:
     TRAINING_DATA_DIR = "new_training_data"
     TRAINING_DATA_FILE = os.path.join(TRAINING_DATA_DIR, "new_training_data.json")
     TIME_LIMIT = timedelta(minutes=30)
-    MAX_HISTORY_LENGTH = 20
+    MAX_HISTORY_LENGTH = 30
     SYSTEM_PROMPT = f""" 
     You are Gregg Limper.
     {MAIN_SYS_PROMPT}
@@ -166,7 +165,7 @@ class GreggLimperBot:
                 content_with_titles = content_with_titles.replace(url, f"[{link_data}]({url})")
 
         # Remove @mention of the bot from the content
-        content_without_mention = content_with_titles.replace(f"<@{user_id}>", "").strip()
+        content_without_mention = re.sub(rf"<@!?{user_id}>", "", content_with_titles).strip()
         return content_without_mention
 
     async def encode_image_base64(self, image_path):
@@ -276,6 +275,13 @@ class GreggLimperBot:
             cleared = await self.clear_conversation_history(message.channel.id, message.channel.name)
             await message.channel.send("All gone <:brainlet:1300560937778155540>" if cleared else "No history found.")
             return
+        
+        # # Check for /mindcontrol command
+        # if message.content.startswith(f"<@{self.bot.user.id}>") and message.content.strip().endswith("/mindcontrol"):
+        #     # Add what the user says to USER_ADDED_RULES
+        #     USER_ADDED_RULES.append(message.content + "\n")
+        #     await message.channel.send(f"{message.content}.")
+        #     return
         
         # Process message content and remove bot mentions
         content_without_mention = await self.process_message_content(message.content, message.author.id)

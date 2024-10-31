@@ -10,9 +10,9 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta, timezone
 import discord
 from openai import OpenAI
+from googleapiclient.discovery import build
 from privtoken import OPENAI_API_KEY, DISCORD_API_TOKEN, YOUTUBE_API_KEY, GIPHY_API_KEY
 from sys_prompt import MAIN_SYS_PROMPT, RULES   #, USER_ADDED_RULES
-from googleapiclient.discovery import build
 
 # TODO: add propper GIF support (similar to YouTube)
 
@@ -521,7 +521,7 @@ class GreggLimperBot:
                     functions=[
                         {
                             "name": "youtube_query",
-                            "description": "Retrieve a relevant YouTube video based on a user's query, intended to provide insight, evidence, or respond to specific requests.",
+                            "description": "Retrieve a relevant YouTube video based on a user's query.",
                             "parameters": {
                                 "type": "object",
                                 "properties": {
@@ -535,7 +535,7 @@ class GreggLimperBot:
                         },
                         {
                             "name": "gif_query",
-                            "description": "Retrieve a relevant GIF based on a user's query, intended to enhance expression, illustrate a point, or respond to specific requests.",
+                            "description": "Retrieve a relevant GIF based on a user's query.",
                             "parameters": {
                                 "type": "object",
                                 "properties": {

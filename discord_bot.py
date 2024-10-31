@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta, timezone
 import discord
 from openai import OpenAI
-from privtoken import OPENAI_API_KEY, DISCORD_API_TOKEN, YOUTUBE_API_KEY
+from privtoken import OPENAI_API_KEY, DISCORD_API_TOKEN, YOUTUBE_API_KEY, GIPHY_API_KEY
 from sys_prompt import MAIN_SYS_PROMPT, RULES   #, USER_ADDED_RULES
 from googleapiclient.discovery import build
 
@@ -232,6 +232,8 @@ class GreggLimperBot:
         # Remove @GreggLimper mention from the content
         content_without_mention = re.sub(rf"<@!?{self.bot.user.id}>", "", content_with_titles).strip()
 
+        return content_without_mention
+
     async def encode_image_base64(self, image_path):
         """Encode an image at the specified path to base64.
         
@@ -339,6 +341,30 @@ class GreggLimperBot:
             print(f"Error searching YouTube: {str(e)}")
             return "Error performing YouTube search."
 
+    async def search_gif(self, query):
+        """Search Giphy and return the top GIF result URL.
+        
+        Args:
+            query (str): The search query for Giphy.
+        Returns:
+            str: The top GIF result URL from Giphy, or an error message if no results are found.
+        """
+        giphy_url = f"https://api.giphy.com/v1/gifs/search?api_key={GIPHY_API_KEY}&q={query}&limit=1"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(giphy_url) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        if data["data"]:
+                            return data["data"][0]["url"]
+                        else:
+                            return "No GIF results found for that query."
+                    else:
+                        return f"Error searching Giphy: {response.status}"
+        except Exception as e:
+            print(f"Error searching Giphy: {str(e)}")
+            return "Error performing Giphy search."
+
     async def process_assistant_reply(self, response, message, conversation_history):
         """Process the assistant's reply, handling function calls, mention replacements, and history appending.
 
@@ -350,19 +376,31 @@ class GreggLimperBot:
             None: The assistant's reply is sent to the channel and saved to the conversation history.
         """
         
-        # Check if OpenAI responded with a function call (i.e. YouTube search)
+        # Check if OpenAI responded with a function call (i.e. YouTube search, GIF search)
         if response.choices[0].finish_reason == "function_call":
             action = response.choices[0].message.function_call
-            if action and action.name == "youtube_query":
+            if action:
                 # Execute the YouTube search and send the result
-                arguments = json.loads(action.arguments)
-                search_term = arguments["search_term"]
-                print(f"Executing YouTube search for {search_term}")
-                youtube_result = await self.search_youtube(search_term)
-                await message.channel.send(youtube_result)
+                if action.name == "youtube_query":
+                    arguments = json.loads(action.arguments)
+                    search_term = arguments["search_term"]
+                    print(f"Executing YouTube search for {search_term}")
+                    youtube_result = await self.search_youtube(search_term)
+                    await message.channel.send(youtube_result)
+                # Execute the GIF search and send the result
+                elif action.name == "gif_query":
+                    arguments = json.loads(action.arguments)
+                    search_term = arguments["search_term"]
+                    print(f"Executing GIF search for {search_term}")
+                    gif_result = await self.search_gif(search_term)
+                    await message.channel.send(gif_result)
+                else:
+                    print(f"Unknown function call: {action.name}")
+                    return
+                
                 conversation_history.append({
                     "role": "assistant",
-                    "content": youtube_result,
+                    "content": gif_result if action.name == "gif_query" else youtube_result,
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 })
                 self.save_conversation_history(message.channel.id, message.channel.name, conversation_history)
@@ -483,13 +521,27 @@ class GreggLimperBot:
                     functions=[
                         {
                             "name": "youtube_query",
-                            "description": "Search for a YouTube video based on the query.",
+                            "description": "Retrieve a relevant YouTube video based on a user's query, intended to provide insight, evidence, or respond to specific requests.",
                             "parameters": {
                                 "type": "object",
                                 "properties": {
                                     "search_term": {
                                         "type": "string",
                                         "description": "Query to search for on YouTube"
+                                    }
+                                },
+                                "required": ["search_term"]
+                            }
+                        },
+                        {
+                            "name": "gif_query",
+                            "description": "Retrieve a relevant GIF based on a user's query, intended to enhance expression, illustrate a point, or respond to specific requests.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "search_term": {
+                                        "type": "string",
+                                        "description": "Query to search for a GIF"
                                     }
                                 },
                                 "required": ["search_term"]

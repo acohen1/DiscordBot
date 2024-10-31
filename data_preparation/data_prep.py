@@ -48,8 +48,9 @@ def batch_moderate_content(batch, max_retries=7):
         except Exception as e:
             print(f"\nModeration API error: {e}")
             retry_count += 1
+            # Exponential backoff
             print(f"Retrying... Attempt {retry_count}/{max_retries}")
-            time.sleep(2 ** retry_count)  # Exponential backoff
+            time.sleep(2 ** retry_count)
     return [None] * len(batch)
 
 # Process messages in batches for moderation

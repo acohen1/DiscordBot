@@ -59,11 +59,11 @@ class GreggLimperBot:
     def run(self):
         self.bot.run(DISCORD_API_TOKEN)
     
-# ==================== Utility Functions ====================
+# ==================== Conversation History ====================
 
     def get_history_file_path(self, channel_id):
         """
-        Path to the JSON file for channel conversation history.
+        Path to the JSON file for the specified channel's locally cached conversation history.
 
         Args:
             channel_id (int): The ID of the discord channel.
@@ -74,7 +74,7 @@ class GreggLimperBot:
     
     def get_local_conversation_history(self, channel_id):
         """
-        Loads the conversation history for the specified channel.
+        Loads the locally cached conversation history for the specified channel.
 
         Args:
             channel_id (int): The ID of the discord channel.
@@ -110,6 +110,23 @@ class GreggLimperBot:
         with open(self.get_history_file_path(channel_id), "w") as f:
             json.dump(data, f, indent=4)
     
+    def clear_conversation_history(self, channel_id, channel_name):
+        """
+        Clear conversation history without deleting the file.
+        
+        Args:
+            channel_id (int): The ID of the discord channel.
+            channel_name (str): The name of the discord channel.
+        Returns:
+            bool: True if the history was cleared successfully, False otherwise.    
+        """
+        file_path = self.get_history_file_path(channel_id)
+        if os.path.exists(file_path):
+            with open(file_path, "w") as f:
+                json.dump({"channel_id": channel_id, "channel_name": channel_name, "messages": []}, f, indent=4)
+            return True
+        return False
+
     def save_to_training_data(self, messages, message_id):
         """
         Save new conversation entry to training data if it's unique.
@@ -143,23 +160,6 @@ class GreggLimperBot:
             json.dump(existing_data, f, indent=4)
         print(f"Saved new training data: {data_entry['messages'][-1]['content']}")
 
-    def clear_conversation_history(self, channel_id, channel_name):
-        """
-        Clear conversation history without deleting the file.
-        
-        Args:
-            channel_id (int): The ID of the discord channel.
-            channel_name (str): The name of the discord channel.
-        Returns:
-            bool: True if the history was cleared successfully, False otherwise.    
-        """
-        file_path = self.get_history_file_path(channel_id)
-        if os.path.exists(file_path):
-            with open(file_path, "w") as f:
-                json.dump({"channel_id": channel_id, "channel_name": channel_name, "messages": []}, f, indent=4)
-            return True
-        return False
-
     async def periodic_cleanup(self):
         """
         Periodically clear old conversation histories.
@@ -176,6 +176,8 @@ class GreggLimperBot:
                 ]
                 self.save_conversation_history(data["channel_id"], data["channel_name"], conversation_history)
             await asyncio.sleep(self.PERIODIC_CLEANUP_INTERVAL)
+
+# ==================== Message Processing ====================
 
     async def fetch_link_data(self, url):
         """
@@ -525,12 +527,9 @@ class GreggLimperBot:
             reaction (discord.Reaction): The reaction object added to the message.
             user (discord.User): The user who added the reaction.
         """
-        # TODO: If some amount of reactions have been recieved, save that to the training data as a 'user' message,
-        # TODO: prompt the bot for a response (tell it it's recieved many reactions of the emoji type), and save that response as an 'assistant' message.
-
         if user == self.bot.user or reaction.message.author != self.bot.user:
             return
-
+        
         # Fetch recent messages for training data
         conversation_history = []
         async for msg in reaction.message.channel.history(limit=self.REACTION_HISTORY_LENGTH, before=reaction.message.created_at):
@@ -550,6 +549,7 @@ class GreggLimperBot:
             "content": reaction.message.content,
             "timestamp": reaction.message.created_at.isoformat()
         })
+
         self.save_to_training_data(conversation_history, reaction.message.id)
 
 if __name__ == "__main__":

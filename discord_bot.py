@@ -62,8 +62,7 @@ class GreggLimperBot:
 # ==================== Conversation History ====================
 
     def get_history_file_path(self, channel_id):
-        """
-        Path to the JSON file for the specified channel's locally cached conversation history.
+        """Path to the JSON file for the specified channel's locally cached conversation history.
 
         Args:
             channel_id (int): The ID of the discord channel.
@@ -73,8 +72,7 @@ class GreggLimperBot:
         return os.path.join(self.HISTORY_DIR, f"{channel_id}.json")
     
     def get_local_conversation_history(self, channel_id):
-        """
-        Loads the locally cached conversation history for the specified channel.
+        """Loads the locally cached conversation history for the specified channel.
 
         Args:
             channel_id (int): The ID of the discord channel.
@@ -89,8 +87,7 @@ class GreggLimperBot:
         return []
 
     def save_conversation_history(self, channel_id, channel_name, conversation_history):
-        """
-        Saves conversation history to a JSON file for the specified channel.
+        """Saves conversation history to a JSON file for the specified channel.
         
         Args:
             channel_id (int): The ID of the discord channel.
@@ -111,8 +108,7 @@ class GreggLimperBot:
             json.dump(data, f, indent=4)
     
     def clear_conversation_history(self, channel_id, channel_name):
-        """
-        Clear conversation history without deleting the file.
+        """Clear conversation history without deleting the file.
         
         Args:
             channel_id (int): The ID of the discord channel.
@@ -128,8 +124,7 @@ class GreggLimperBot:
         return False
 
     def save_to_training_data(self, messages, message_id):
-        """
-        Save new conversation entry to training data if it's unique.
+        """Save new conversation entry to training data if it's unique.
         
         Args:
             messages (list): The conversation history for the channel. Format: [{"role": str, "content": str, "timestamp": str}]
@@ -161,9 +156,7 @@ class GreggLimperBot:
         print(f"Saved new training data: {data_entry['messages'][-1]['content']}")
 
     async def periodic_cleanup(self):
-        """
-        Periodically clear old conversation histories.
-        """
+        """Periodically clear old conversation histories."""
         while True:
             for filename in os.listdir(self.HISTORY_DIR):
                 file_path = os.path.join(self.HISTORY_DIR, filename)
@@ -180,8 +173,7 @@ class GreggLimperBot:
 # ==================== Message Processing ====================
 
     async def fetch_link_data(self, url):
-        """
-        Fetch the title of a URL and return it.
+        """Fetch the title of a URL and return it.
 
         Args:
             url (str): The URL to fetch the title from.
@@ -219,8 +211,7 @@ class GreggLimperBot:
             return None
 
     async def process_message_content(self, content, user_id):
-        """
-        Process message content by formatting URLs and removing bot mentions.
+        """Process message content by formatting URLs and removing bot mentions.
         
         Args:
             content (str): The content of the message.
@@ -240,11 +231,9 @@ class GreggLimperBot:
 
         # Remove @GreggLimper mention from the content
         content_without_mention = re.sub(rf"<@!?{self.bot.user.id}>", "", content_with_titles).strip()
-        return content_without_mention
 
     async def encode_image_base64(self, image_path):
-        """
-        Encode an image at the specified path to base64.
+        """Encode an image at the specified path to base64.
         
         Args:
             image_path (str): The path to the image file.
@@ -255,8 +244,7 @@ class GreggLimperBot:
             return base64.b64encode(await image_file.read()).decode('utf-8')
 
     async def process_image_content(self, message):
-        """
-        Process image attachments in a message by downloading, encoding, and sending to OpenAI.
+        """Process image attachments in a message by downloading, encoding, and sending to OpenAI.
         
         Args:
             message (discord.Message): The message object with image attachments.
@@ -322,8 +310,7 @@ class GreggLimperBot:
         return None
 
     async def search_youtube(self, query):
-        """
-        Search YouTube and return the top video result.
+        """Search YouTube and return the top video result.
         
         Args:
             query (str): The search query for YouTube.
@@ -353,8 +340,7 @@ class GreggLimperBot:
             return "Error performing YouTube search."
 
     async def process_assistant_reply(self, response, message, conversation_history):
-        """
-        Process the assistant's reply, handling function calls, mention replacements, and history appending.
+        """Process the assistant's reply, handling function calls, mention replacements, and history appending.
 
         Args:
             response (OpenAIResponse): The response object from OpenAI.
@@ -416,8 +402,7 @@ class GreggLimperBot:
 # ==================== Event Handlers ====================
 
     async def on_ready(self):
-        """
-        Event handler triggered when the bot is ready to begin processing events.
+        """Event handler triggered when the bot is ready to begin processing events.
         Loads recent chat history from the allowed channels, storing up to `CACHED_HISTORY_LENGTH` messages or until the specified `TIME_LIMIT` is reached, whichever occurs first. 
         Initiates the periodic cleanup task to maintain channel history within these limits.
         """
@@ -453,8 +438,8 @@ class GreggLimperBot:
                 self.save_conversation_history(channel_id, channel.name, conversation_history)
 
     async def on_message(self, message):
-        """
-        Event handler for when a message is sent in a channel. Process message content, handle OpenAI responses, and update the channel history.
+        """Event handler for when a message is sent in a channel. 
+        Process message content, handle OpenAI responses, and update the channel history.
 
         Args:
             message (discord.Message): The message object sent in the channel.
@@ -520,8 +505,8 @@ class GreggLimperBot:
                 await message.channel.send(f"Error: {str(e)}")
 
     async def on_reaction_add(self, reaction, user):
-        """
-        Event handler for when a reaction is added to a message. Fetch recent messages for training data and save to the training data file.
+        """Event handler for when a reaction is added to a message. 
+        Fetch recent messages for training data and save to the training data file.
 
         Args:
             reaction (discord.Reaction): The reaction object added to the message.

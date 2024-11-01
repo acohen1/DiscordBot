@@ -325,7 +325,8 @@ class GreggLimperBot:
 
     async def process_links(self, message_content: str, from_bot: bool = False) -> str:
         """Replace or reformat links in the message content with descriptions and content markers, using 
-        separate logic for user-generated versus bot-generated links.
+        separate logic for user-generated versus bot-generated links. Titles/descriptions are fetched for
+        YouTube, GIF, and general links. If the message already contains a formatted link using ~|~, it is skipped.
 
         Args:
             message_content (str): The content of the message.
@@ -613,33 +614,6 @@ class GreggLimperBot:
         message_to_send = message
         message_to_cache = message
 
-        # Helper to process YouTube link
-        async def process_youtube_link(query: str):
-            title, author, description, url = await self.search_youtube(query=query)
-            if title and author and url:
-                description_display = description if description else "No description available"
-                return f"[{title}](<{url}>)", f"[{title} ~|~ {author} ~|~ {description_display}](YT_Video)"
-            else:
-                return "YouTube search returned no results.", "[Error fetching YouTube data](YT_Video)"
-
-        # Helper to process GIF link
-        async def process_gif_link(query: str):
-            title, description, url = await self.search_gif(query=query)
-            if url:
-                description_display = description if description else "No description available"
-                return url, f"[{title} ~|~ {description_display}](GIF)"
-            else:
-                return "GIF search returned no results.", "[GIF Link Unavailable](GIF)"
-
-        # Helper to process generic link
-        async def process_generic_link(query: str):
-            results = await self.search_google(query, num_results=1)
-            for result in results:
-                if result["title"] and result["link"]:
-                    description_display = result["snippet"] if result["snippet"] else "No description available"
-                    return f"[{result['title']}](<{result['link']}>)", f"[{result['title']} ~|~ {description_display}](LINK)"
-            return "Google search returned no results.", "[Link Unavailable](LINK)"
-
         # Process hallucinated links with markers
         youtube_match = re.search(r"\[.*\]\(YT_Video\)", message)
         gif_match = re.search(r"\[.*\]\(GIF\)", message)
@@ -649,17 +623,17 @@ class GreggLimperBot:
             print("Processing hallucinated YouTube link")
             content_parts = youtube_match.group(0).split("~|~")
             query = " ".join(part.strip("[]") for part in content_parts[:2])  # Extract title and author if available
-            message_to_send, message_to_cache = await process_youtube_link(query=query)
+            message_to_send, message_to_cache = await self._process_youtube_link(query=query)
 
         elif gif_match:
             print("Processing hallucinated GIF link")
             query = gif_match.group(0).split("~|~")[0][1:].strip()  # Extract title as query
-            message_to_send, message_to_cache = await process_gif_link(query=query)
+            message_to_send, message_to_cache = await self._process_gif_link(query=query)
 
         elif link_match:
             print("Processing hallucinated generic link")
             query = link_match.group(0).split("~|~")[0][1:].strip()  # Extract title as query
-            message_to_send, message_to_cache = await process_generic_link(query=query)
+            message_to_send, message_to_cache = await self._process_generic_link(query=query)
 
         else:
             # Process raw links without markers
@@ -671,17 +645,17 @@ class GreggLimperBot:
                 query = query_match.group(1).replace("-", " ").replace("_", " ") if query_match else "generic query"
 
                 if "youtube.com" in raw_url or "youtu.be" in raw_url:
-                    youtube_send, youtube_cache = await process_youtube_link(query=query)
+                    youtube_send, youtube_cache = await self._process_youtube_link(query=query)
                     message_to_send = message_to_send.replace(raw_url, youtube_send)
                     message_to_cache = message_to_cache.replace(raw_url, youtube_cache)
 
                 elif "giphy.com" in raw_url or "tenor.com" in raw_url:
-                    gif_send, gif_cache = await process_gif_link(query=query)
+                    gif_send, gif_cache = await self._process_gif_link(query=query)
                     message_to_send = message_to_send.replace(raw_url, gif_send)
                     message_to_cache = message_to_cache.replace(raw_url, gif_cache)
 
                 else:
-                    generic_send, generic_cache = await process_generic_link(query=query)
+                    generic_send, generic_cache = await self._process_generic_link(query=query)
                     message_to_send = message_to_send.replace(raw_url, generic_send)
                     message_to_cache = message_to_cache.replace(raw_url, generic_cache)
 
@@ -920,3 +894,48 @@ class GreggLimperBot:
         """
         async with aiofiles.open(image_path, "rb") as image_file:
             return base64.b64encode(await image_file.read()).decode('utf-8')
+        
+    async def _process_youtube_link(self, query: str) -> Tuple[str, str]:
+        """Search youtube for the given query and format the response for the discord message and cache entry.
+        
+        Args:
+            query (str): The search query for YouTube.
+        Returns:
+            tuple: The formatted YouTube link and cache entry (message_to_send, message_to_cache).
+        """
+        title, author, description, url = await self.search_youtube(query=query)
+        if title and author and url:
+            description_display = description if description else "No description available"
+            return f"[{title}](<{url}>)", f"[{title} ~|~ {author} ~|~ {description_display}](YT_Video)"
+        else:
+            return "YouTube search returned no results.", "[Error fetching YouTube data](YT_Video)"
+
+    async def _process_gif_link(self, query: str) -> Tuple[str, str]:
+        """Search GIf for the given query and format the response for the discord message and cache entry.
+        
+        Args:
+            query (str): The search query for GIF.
+        Returns:
+            tuple: The formatted YouTube link and cache entry (message_to_send, message_to_cache).
+        """
+        title, description, url = await self.search_gif(query=query)
+        if url:
+            description_display = description if description else "No description available"
+            return url, f"[{title} ~|~ {description_display}](GIF)"
+        else:
+            return "GIF search returned no results.", "[GIF Link Unavailable](GIF)"
+
+    async def _process_generic_link(self, query: str, num_results=1) -> Tuple[str, str]:
+        """Search Google for the given query and format the response for the discord message and cache entry.
+        
+        Args:
+            query (str): The search query for Google.
+        Returns:
+            tuple: The formatted YouTube link and cache entry (message_to_send, message_to_cache).
+        """
+        results = await self.search_google(query, num_results=num_results)
+        for result in results:
+            if result["title"] and result["link"]:
+                description_display = result["snippet"] if result["snippet"] else "No description available"
+                return f"[{result['title']}](<{result['link']}>)", f"[{result['title']} ~|~ {description_display}](LINK)"
+        return "Google search returned no results.", "[Link Unavailable](LINK)"

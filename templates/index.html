@@ -15,26 +15,63 @@
         h1 { text-align: center; color: #333; }
         h2 { color: #444; text-align: center; font-size: 1.2em; margin-bottom: 0.5em; }
     </style>
+    <script>
+        // Function to fetch new conversation data and update the page content
+        async function fetchAndUpdateConversations() {
+            try {
+                const response = await fetch('/show_cache');  // Fetch the latest conversation data
+                const conversations = await response.json();   // Parse the JSON response
+
+                // Get the container to display conversations
+                const container = document.querySelector('.container');
+                container.innerHTML = '';  // Clear existing content
+
+                // Loop through each channel and add it to the page
+                for (const [channel_name, conversation_history] of Object.entries(conversations)) {
+                    const conversationDiv = document.createElement('div');
+                    conversationDiv.className = 'conversation';
+
+                    const channelTitle = document.createElement('h2');
+                    channelTitle.textContent = channel_name;
+                    conversationDiv.appendChild(channelTitle);
+
+                    conversation_history.forEach(msg => {
+                        const messageDiv = document.createElement('div');
+                        messageDiv.className = `message ${msg.role}`;
+
+                        if (msg.role === 'assistant') {
+                            messageDiv.innerHTML = `${msg.content}<br>`;
+                        } else {
+                            messageDiv.innerHTML = `<strong>${msg.displayname}:</strong> ${msg.content}<br>`;
+                        }
+
+                        const timestampSpan = document.createElement('span');
+                        timestampSpan.className = 'timestamp';
+                        timestampSpan.textContent = new Date(msg.timestamp).toLocaleString("en-US", { timeZone: "America/New_York" });
+                        messageDiv.appendChild(timestampSpan);
+
+                        conversationDiv.appendChild(messageDiv);
+                    });
+
+                    container.appendChild(conversationDiv);
+                }
+            } catch (error) {
+                console.error('Error fetching conversation data:', error);
+            }
+        }
+
+        // Set an interval to refresh conversations every 5 seconds
+        setInterval(fetchAndUpdateConversations, 5000);
+
+        // Initial load when the page is first opened
+        window.onload = fetchAndUpdateConversations;
+    </script>
 </head>
 <body>
     <h1>Conversation Histories</h1>
-    <p>Viewing the latest messages per conversation. Refresh this page to see updates.</p>
+    <p>Viewing the latest messages per conversation.</p>
     <div class="container">
-        {% for channel_name, conversation_history in conversations.items() %}
-            <div class="conversation">
-                <h2>{{ channel_name }}</h2>
-                {% for msg in conversation_history %}
-                    <div class="message {{ msg['role'] }}">
-                        {% if msg['role'] == 'assistant' %}
-                            {{ msg['content'] }}<br>
-                        {% else %}
-                            <strong>{{ msg['displayname'] }}:</strong> {{ msg['content'] }}<br>
-                        {% endif %}
-                        <span class="timestamp">{{ msg['timestamp'] | to_est_time }}</span>
-                    </div>
-                {% endfor %}
-            </div>
-        {% endfor %}
+        <!-- Conversations will be loaded here by JavaScript -->
     </div>
 </body>
 </html>

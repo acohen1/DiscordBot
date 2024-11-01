@@ -2,12 +2,12 @@
 # Latest Updaet: 11/01/2024
 import os
 import json
-import asyncio
 import re
 import aiohttp
 import aiofiles
 import base64
 import tempfile
+import logging
 from collections import deque
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta, timezone
@@ -34,7 +34,7 @@ class GreggLimperBot:
         # Setup Directories
         os.makedirs(self.training_data_dir, exist_ok=True)
 
-        # Initialized cached conversation history
+        # Initialize cached conversation history
         self.recent_message_cache: RecentMessageCache = {channel_id: deque(maxlen=self.cached_history_length) for channel_id in self.allowed_channel_ids}
  
     def _initialize_components(self) -> None:
@@ -71,6 +71,14 @@ class GreggLimperBot:
         self.bot.event(self.on_message)
         self.bot.event(self.on_reaction_add)
 
+        # Loggers :O
+        self.logger = logging.getLogger("GreggLimperBot")
+        self.logger.setLevel(logging.INFO)
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+        self.logger.addHandler(handler)
+
+
     def run(self) -> None:
         self.bot.run(self.discord_api_token)
     
@@ -80,7 +88,7 @@ class GreggLimperBot:
         """Event handler triggered when the bot is ready to begin processing events.
         Load and process recent chat history from the allowed channels into the channel's deque cache.
         """
-        print(f'Logged in as {self.bot.user}')
+        self.logger.info(f'Logged in as {self.bot.user}')
 
         # For each of the allowed channels, grab chat history from discord up to the cached history length and store in the deque
         for channel_id in self.allowed_channel_ids:
@@ -161,7 +169,7 @@ class GreggLimperBot:
 
         # Check if OpenAI returned a response
         if not response:
-            print("OpenAI response is None. Skipping message processing.")
+            self.logger.error("OpenAI response is None. Skipping message processing.")
             return
 
         # Query the assistant's replied action (regular message, YouTube search, or GIF search)
@@ -181,7 +189,6 @@ class GreggLimperBot:
         """
         channel_id = reaction.message.channel.id
         reacted_msg_time = reaction.message.created_at
-        print(reacted_msg_time)
 
         # Ignore reactions from the bot and messages not sent by the bot
         if user == self.bot.user or reaction.message.author != self.bot.user:
@@ -198,7 +205,7 @@ class GreggLimperBot:
         )
         # Only proceed if the message is in the cache
         if not reacted_message:
-            print("Reacted message is not in cache, skipping training data addition.")
+            self.logger.info("Reacted message is not in cache, skipping training data addition.")
             return
         
         # Get the reaction history length number of newest messages from the cache
@@ -222,11 +229,11 @@ class GreggLimperBot:
                 try:
                     training_data_list = json.loads(await file.read())
                 except json.JSONDecodeError:
-                    print("Error decoding training data JSON file. Initializing as empty list.")
+                    self.logger.error("Error decoding training data JSON file. Initializing as empty list.")
         
         # Check if message_id is already present in training data
         if any(entry["message_id"] == reaction.message.id for entry in training_data_list):
-            print("Message ID already exists in training data. Skipping addition.")
+            self.logger.info("Message ID already exists in training data. Skipping addition.")
             return
         
         # Append the new training data to the training data list
@@ -239,9 +246,9 @@ class GreggLimperBot:
         async with aiofiles.open(training_data_file, "w") as file:
             try:
                 await file.write(json.dumps(training_data_list, indent=4))
-                print(f"Added message to training data: {reacted_message['content']}")
+                self.logger.info(f"Added message to training data: {reacted_message['content']}")
             except Exception as e:
-                print(f"Error writing training data to file: {str(e)}")
+                self.logger.error(f"Error writing training data to file: {str(e)}")
 
 # ==================== Discord Message Processing ====================
 
@@ -258,70 +265,25 @@ class GreggLimperBot:
             str: The processed message content.
         """
         message_content = message.content
-        # print(f"Original message content: {message_content}")  # Log original message
-
+        self.logger.debug(f"Original message content: {message_content}")
 
         # 1. Process mentions in the message content
-        message_content_without_mentions = self.process_mentions(message_content)
-        # print(f"After mention processing: {message_content_without_mentions}")  # Log after mention processing
+        message_content_without_mentions = self.replace_mentions(message_content)
+        self.logger.debug(f"After mention processing: {message_content_without_mentions}")
 
 
-        # 2. Replace links with titles for either user or bot messages
+        # 2. Replace links with titles for user ^ bot messages
         message_content_without_links = await self.process_links(message_content_without_mentions, from_bot=message.author.id == self.bot.user.id)
-        # if message.author.id == self.bot.user.id:
-        #     message_content_without_links = await self.process_links_from_bot(message_content_without_mentions)
-        # else:
-        #     message_content_without_links = await self.process_links_from_user(message_content_without_mentions)
-
-        # print(f"After link processing: {message_content_without_links}")  # Log after link processing
+        self.logger.debug(f"After link processing: {message_content_without_links}")
 
         # 3. Process image content by downloading, encoding, and sending to OpenAI
         image_description = await self.process_image_content(message)
         if image_description:
             message_content_without_links += f" [Image description: {image_description}]"
         
-        # print(f"Final processed content: {message_content_without_links}")  # Log final processed content
+        self.logger.debug(f"Final processed content: {message_content_without_links}")
         # 4. Return the processed message content
         return message_content_without_links
-
-    def process_mentions(self, message: str) -> str:
-        """Replace all user, role, and channel mentions in the message content with their display names, 
-        and remove mentions of the bot itself.
-        
-        Args:
-            message (str): The content of the message.
-        Returns:
-            str: The content with mentions replaced by display names and the bot's mention removed.
-        """
-        bot_id = self.bot.user.id  # Store the bot's ID for comparison
-        users = self.bot.guilds[0].members
-        roles = self.bot.guilds[0].roles
-        channels = self.bot.guilds[0].channels
-        
-        # Replace any mentions in the response with display names for users, names for roles, or names for channels
-        def replace_mention(match):
-            mention_id = int(match.group(1) or match.group(2) or match.group(3))
-
-            # Skip the bot's mention entirely
-            if mention_id == bot_id:
-                return ""  # Return empty string to remove mention of the bot
-            
-            if match.group(1):  # User mention
-                user = next((u for u in users if u.id == mention_id), None)
-                return user.display_name if user else "<Unknown User>"
-
-            elif match.group(2):  # Role mention
-                role = next((r for r in roles if r.id == mention_id), None)
-                return role.name if role else "<Unknown Role>"
-
-            elif match.group(3):  # Channel mention
-                channel = next((c for c in channels if c.id == mention_id), None)
-                return channel.name if channel else "<Unknown Channel>"
-
-        # This regex matches user mentions (<@userID> or <@!userID>), role mentions (<@&roleID>), and channel mentions (<#channelID>)
-        msg_content = re.sub(r"<@!?(\d+)>|<@&(\d+)>|<#(\d+)>", replace_mention, message)
-
-        return msg_content
 
     async def process_links(self, message_content: str, from_bot: bool = False) -> str:
         """Replace or reformat links in the message content with descriptions and content markers, using 
@@ -335,8 +297,7 @@ class GreggLimperBot:
             str: The content with links replaced with titles and markers.
         """
         # Skip reformatting if the message already contains a formatted link using ~|~
-        formatted_pattern = re.compile(r"\[.*? ~\|~ .*?\]\((YT_Video|GIF|LINK)\)")
-        if formatted_pattern.search(message_content):
+        if re.search(r"\[.*? ~\|~ .*?\]\((YT_Video|GIF|LINK)\)", message_content):
             return message_content
 
         if from_bot:
@@ -403,15 +364,15 @@ class GreggLimperBot:
                             if resp.status == 200:
                                 async with aiofiles.open(image_path, "wb") as f:
                                     await f.write(await resp.read())
-                                print(f"Downloaded image {attachment.filename}")
+                                self.logger.info(f"Downloaded image {attachment.filename}")
                             else:
-                                print(f"Failed to download image {attachment.filename} - HTTP {resp.status}")
+                                self.logger.warning(f"Failed to download image {attachment.filename} - HTTP {resp.status}")
                                 return None
 
                     # Encode the downloaded image to base64
                     base64_image = await self.encode_image_base64(image_path)
                     if not base64_image:
-                        print("Failed to encode image to base64.")
+                        self.logger.warning("Failed to encode image to base64.")
                         return None
 
                     # Prepare and send the request to OpenAI for image analysis
@@ -440,20 +401,59 @@ class GreggLimperBot:
                     return result
 
                 except Exception as e:
-                    print(f"Error processing image content: {str(e)}")
+                    self.logger.error(f"Error processing image content: {str(e)}")
                     return None
 
                 finally:
                     # Clean up the temporary file
                     try:
                         os.remove(image_path)
-                        print(f"Deleted temporary image file: {image_path}")
+                        self.logger.info(f"Deleted temporary image file: {image_path}")
                     except Exception as e:
-                        print(f"Error deleting temporary image file: {e}")
+                        self.logger.error(f"Error deleting temporary image file: {e}")
         
         # Return None if no image attachments are found
         return None
  
+    def replace_mentions(self, message: str) -> str:
+        """Replace all user, role, and channel mentions in the message content with their display names, 
+        and remove mentions of the bot itself.
+        
+        Args:
+            message (str): The content of the message.
+        Returns:
+            str: The content with mentions replaced by display names and the bot's mention removed.
+        """
+        bot_id = self.bot.user.id  # Store the bot's ID for comparison
+        users = self.bot.guilds[0].members
+        roles = self.bot.guilds[0].roles
+        channels = self.bot.guilds[0].channels
+        
+        # Replace any mentions in the response with display names for users, names for roles, or names for channels
+        def replace_mention(match):
+            mention_id = int(match.group(1) or match.group(2) or match.group(3))
+
+            # Skip the bot's mention entirely
+            if mention_id == bot_id:
+                return ""  # Return empty string to remove mention of the bot
+            
+            if match.group(1):  # User mention
+                user = next((u for u in users if u.id == mention_id), None)
+                return user.display_name if user else "<Unknown User>"
+
+            elif match.group(2):  # Role mention
+                role = next((r for r in roles if r.id == mention_id), None)
+                return role.name if role else "<Unknown Role>"
+
+            elif match.group(3):  # Channel mention
+                channel = next((c for c in channels if c.id == mention_id), None)
+                return channel.name if channel else "<Unknown Channel>"
+
+        # This regex matches user mentions (<@userID> or <@!userID>), role mentions (<@&roleID>), and channel mentions (<#channelID>)
+        msg_content = re.sub(r"<@!?(\d+)>|<@&(\d+)>|<#(\d+)>", replace_mention, message)
+
+        return msg_content
+
 # ==================== OpenAI Response Processing ====================
 
     async def query_gregg(self, conversation_history: ConversationHistory) -> Optional[OpenAIResponse]:
@@ -503,7 +503,7 @@ class GreggLimperBot:
             )
             return response
         except Exception as e:
-            print(f"Error querying Gregg Limper: {str(e)}")
+            self.logger.error(f"Error querying Gregg Limper: {str(e)}")
             return None
 
     async def process_openai_response(self, response: Dict) -> GreggAction:
@@ -526,7 +526,7 @@ class GreggLimperBot:
                 if action.name == "search_youtube_video":
                     arguments = json.loads(action.arguments)
                     search_term = arguments["search_term"]
-                    print(f"Executing YouTube search for '{search_term}'")
+                    self.logger.info(f"Executing YouTube search for '{search_term}'")
                     title, author, description, url = await self.search_youtube(query=search_term)
                     return {
                         "message": None,
@@ -536,7 +536,7 @@ class GreggLimperBot:
                 elif action.name == "search_gif":
                     arguments = json.loads(action.arguments)
                     search_term = arguments["search_term"]
-                    print(f"Executing GIF search for '{search_term}'")
+                    self.logger.info(f"Executing GIF search for '{search_term}'")
                     title, description, url = await self.search_gif(query=search_term)
                     return {
                         "message": None,
@@ -569,7 +569,7 @@ class GreggLimperBot:
 
         # Process general message
         if action["message"]:
-            message_to_send = self.process_mentions(action["message"])  # Ensure mentions are processed correctly
+            message_to_send = self.replace_mentions(action["message"])  # Ensure mentions are processed correctly
             message_to_send, message_to_cache = await self.process_hallucinated_link_reply(message_to_send)
 
         # Process YouTube action
@@ -614,36 +614,44 @@ class GreggLimperBot:
         message_to_send = message
         message_to_cache = message
 
-        # Process hallucinated links with markers
+        # Process hallucinated links with markers ([...](Marker))
         youtube_match = re.search(r"\[.*\]\(YT_Video\)", message)
         gif_match = re.search(r"\[.*\]\(GIF\)", message)
         link_match = re.search(r"\[.*\]\(LINK\)", message)
 
         if youtube_match:
-            print("Processing hallucinated YouTube link")
+            # Replace the hallucinated YouTube link with real data
+            self.logger.info("Processing hallucinated YouTube link")
             content_parts = youtube_match.group(0).split("~|~")
             query = " ".join(part.strip("[]") for part in content_parts[:2])  # Extract title and author if available
             message_to_send, message_to_cache = await self._process_youtube_link(query=query)
 
         elif gif_match:
-            print("Processing hallucinated GIF link")
+            # Replace the hallucinated GIF link with real data
+            self.logger.info("Processing hallucinated GIF link")
             query = gif_match.group(0).split("~|~")[0][1:].strip()  # Extract title as query
             message_to_send, message_to_cache = await self._process_gif_link(query=query)
 
         elif link_match:
-            print("Processing hallucinated generic link")
+            # Replace the hallucinated generic link with real data
+            self.logger.info("Processing hallucinated generic link")
             query = link_match.group(0).split("~|~")[0][1:].strip()  # Extract title as query
             message_to_send, message_to_cache = await self._process_generic_link(query=query)
 
         else:
             # Process raw links without markers
-            print("Processing raw link without markers")
+            self.logger.info("Processing raw link without markers")
+
+            # Find all raw URLs in the message (https:// or http://)
             raw_url_pattern = re.compile(r"(https?://\S+)")
             for raw_url_match in raw_url_pattern.finditer(message):
                 raw_url = raw_url_match.group(0)
+
+                # Extract the new query from the URL and process the link
                 query_match = re.search(r"(?:\.com/)(\S+)", raw_url)
                 query = query_match.group(1).replace("-", " ").replace("_", " ") if query_match else "generic query"
 
+                # Process the link based on the domain
                 if "youtube.com" in raw_url or "youtu.be" in raw_url:
                     youtube_send, youtube_cache = await self._process_youtube_link(query=query)
                     message_to_send = message_to_send.replace(raw_url, youtube_send)
@@ -684,10 +692,10 @@ class GreggLimperBot:
                         description = description_meta["content"] if description_meta else "No description available"
                         return title, description
                     else:
-                        print(f"Error fetching link data: {response.status}")
+                        self.logger.warning(f"Error fetching link data: {response.status}")
                         return None, None
         except Exception as e:
-            print(f"Error fetching link data: {str(e)}")
+            self.logger.error(f"Error fetching link data: {str(e)}")
             return None, None
 
     async def search_google(self, query: str, num_results=1) -> List[Dict[str, str]]:
@@ -705,10 +713,10 @@ class GreggLimperBot:
             if results:
                 return results
             else:
-                print(f"No Google results found for query: {query}")
+                self.logger.warning(f"No Google results found for query: {query}")
                 return []
         except Exception as e:
-            print(f"Error searching Google: {str(e)}")
+            self.logger.error(f"Error searching Google: {str(e)}")
             return []
 
     async def search_gif(self, query: Optional[str] = None, url: Optional[str] = None) -> GIFData:
@@ -722,7 +730,7 @@ class GreggLimperBot:
             tuple: The title, description, and URL of the top GIF result, or None if no results are found.
         """
         if not (query or url):
-            print("Must specify either query or url for search_gif")
+            self.logger.warning("Must specify either query or url for search_gif")
             return None, None, None
         try:
             # Search Giphy with query if provided
@@ -740,10 +748,10 @@ class GreggLimperBot:
                                 description = ", ".join(tags) if tags else "No tags available"
                                 return title, description, url
                             else:
-                                print(f"No Giphy results found for query: {query}")
+                                self.logger.warning(f"No Giphy results found for query: {query}")
                                 return None, None, None
                         else:
-                            print(f"Error searching Giphy: HTTP {response.status}")
+                            self.logger.error(f"Error searching Giphy: HTTP {response.status}")
                             return None, None, None
 
             # Handle direct URL case if provided
@@ -752,7 +760,7 @@ class GreggLimperBot:
                 return title, description, url
 
         except Exception as e:
-            print(f"Error searching Giphy: {str(e)}")
+            self.logger.error(f"Error searching Giphy: {str(e)}")
             return None, None, None
 
     async def search_youtube(self, query: Optional[str] = None, url: Optional[str] = None) -> YouTubeData:
@@ -784,14 +792,14 @@ class GreggLimperBot:
                     description = await self.summarize_description(snippet.get("description"))
                     return title, author, description, url
                 else:
-                    print(f"No YouTube results found for query: {query}")
+                    self.logger.warning(f"No YouTube results found for query: {query}")
                     return None, None, None, None
 
             # Fetch video details by URL
             elif url:
                 video_id = re.search(r"(?:v=|/)([A-Za-z0-9_-]{11})", url)
                 if not video_id:
-                    print("Invalid YouTube URL format.")
+                    self.logger.warning("Invalid YouTube URL format.")
                     return None, None, None, None
                 video_id = video_id.group(1)
 
@@ -805,15 +813,15 @@ class GreggLimperBot:
                     description = await self.summarize_description(snippet.get("description"))
                     return title, author, description, url
                 else:
-                    print(f"No YouTube results found for URL: {url}")
+                    self.logger.warning(f"No YouTube results found for URL: {url}")
                     return None, None, None, None
 
             else:
-                print("No query or URL provided for YouTube search.")
+                self.logger.warning("No query or URL provided for YouTube search.")
                 return None, None, None, None
 
         except Exception as e:
-            print(f"Error searching YouTube: {str(e)}")
+            self.logger.error(f"Error searching YouTube: {str(e)}")
             return None, None, None, None
 
     async def summarize_description(self, description: str) -> str:
@@ -846,7 +854,7 @@ class GreggLimperBot:
             return summary
 
         except Exception as e:
-            print(f"Error summarizing description: {str(e)}")
+            self.logger.error(f"Error summarizing description: {str(e)}")
             return "No summary available" 
 
 # ==================== Utility Functions ====================

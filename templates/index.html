@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Conversation Histories</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 2rem; }
+        body { font-family: Arial, sans-serif; margin: 2rem; color: #333; }
         .container { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; }
-        .conversation { border: 1px solid #ccc; border-radius: 8px; padding: 1rem; width: 300px; background-color: #f9f9f9; }
+        .conversation { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; width: 300px; background-color: #f9f9f9; }
         .message { padding: 10px; margin: 10px 0; border-radius: 8px; }
         .user { background-color: #e1f5fe; text-align: left; }
         .assistant { background-color: #e8f5e9; text-align: left; }
@@ -18,7 +18,7 @@
 </head>
 <body>
     <h1>Conversation Histories</h1>
-    <p>Viewing the latest 10 messages per conversation. Refresh this page to see updates.</p>
+    <p>Viewing the latest messages per conversation. Refresh this page to see updates.</p>
     <div class="container">
         {% for channel_name, conversation_history in conversations.items() %}
             <div class="conversation">
@@ -26,11 +26,11 @@
                 {% for msg in conversation_history %}
                     <div class="message {{ msg['role'] }}">
                         {% if msg['role'] == 'assistant' %}
-                            <strong>Gregg Limper:</strong> {{ msg['content'] }}<br>
+                            {{ msg['content'] }}<br>
                         {% else %}
-                            <strong>{{ msg['content'].split(" says: ")[0] }}</strong>: {{ msg['content'].split(" says: ")[1] }}<br>
+                            <strong>{{ msg['displayname'] }}:</strong> {{ msg['content'] }}<br>
                         {% endif %}
-                        <span class="timestamp">{{ msg['timestamp'] }}</span>
+                        <span class="timestamp">{{ msg['timestamp'] | to_est_time }}</span>
                     </div>
                 {% endfor %}
             </div>

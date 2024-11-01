@@ -4,29 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Conversation Histories</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 2rem; color: #333; }
-        .container { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; }
-        .conversation { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; width: 300px; background-color: #f9f9f9; }
-        .message { padding: 10px; margin: 10px 0; border-radius: 8px; }
-        .user { background-color: #e1f5fe; text-align: left; }
-        .assistant { background-color: #e8f5e9; text-align: left; }
-        .timestamp { font-size: 0.85em; color: #777; }
-        h1 { text-align: center; color: #333; }
-        h2 { color: #444; text-align: center; font-size: 1.2em; margin-bottom: 0.5em; }
-    </style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script>
-        // Function to fetch new conversation data and update the page content
+        // JavaScript remains the same for fetching and updating conversations
         async function fetchAndUpdateConversations() {
             try {
-                const response = await fetch('/show_cache');  // Fetch the latest conversation data
-                const conversations = await response.json();   // Parse the JSON response
+                const response = await fetch('/show_cache');
+                const conversations = await response.json();
 
-                // Get the container to display conversations
                 const container = document.querySelector('.container');
-                container.innerHTML = '';  // Clear existing content
+                container.innerHTML = '';
 
-                // Loop through each channel and add it to the page
                 for (const [channel_name, conversation_history] of Object.entries(conversations)) {
                     const conversationDiv = document.createElement('div');
                     conversationDiv.className = 'conversation';
@@ -60,18 +48,13 @@
             }
         }
 
-        // Set an interval to refresh conversations every 5 seconds
         setInterval(fetchAndUpdateConversations, 5000);
-
-        // Initial load when the page is first opened
         window.onload = fetchAndUpdateConversations;
     </script>
 </head>
 <body>
     <h1>Conversation Histories</h1>
     <p>Viewing the latest messages per conversation.</p>
-    <div class="container">
-        <!-- Conversations will be loaded here by JavaScript -->
-    </div>
+    <div class="container"></div>
 </body>
 </html>

@@ -3,9 +3,12 @@ from discord_bot import GreggLimperBot
 from datetime import datetime
 import pytz
 import threading
+import logging
 
 app = Flask(__name__)
 gregg_limper_bot = GreggLimperBot()
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
 
 # Custom filter to convert timestamps to EST
 @app.template_filter('to_est_time')

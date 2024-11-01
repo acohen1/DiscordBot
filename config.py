@@ -9,6 +9,7 @@ CONFIG = {
     "TRAINING_DATA_DIR": "new_training_data",                                               # The directory to store the new training data file.
     "CACHE_INIT_TIME_LIMIT_MINUTES": 180,                                                   # The time limit for messages to be considered in the conversation history.
     "CACHED_HISTORY_LENGTH": 30,                                                            # The maximum number of messages to store in the recent messages cache
+    "ASSISTANT_CONTEXT_LENGTH": 10,                                                         # The number of messages to send to the assistant for context.  
     "REACTION_HISTORY_LENGTH": 10,                                                          # The number of messages to fetch for training data when a reaction is added.
 
     "OPENAI_API_KEY": OPENAI_API_KEY,

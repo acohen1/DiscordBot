@@ -49,6 +49,7 @@ class GreggLimperBot:
         self.training_data_dir = CONFIG["TRAINING_DATA_DIR"]
         self.cache_init_time_limit = timedelta(minutes=CONFIG["CACHE_INIT_TIME_LIMIT_MINUTES"])
         self.cached_history_length = CONFIG["CACHED_HISTORY_LENGTH"]
+        self.assistant_context_length = CONFIG["ASSISTANT_CONTEXT_LENGTH"]
         self.reaction_history_length = CONFIG["REACTION_HISTORY_LENGTH"]
         self.system_prompt = CONFIG["SYSTEM_PROMPT"]
 
@@ -131,6 +132,7 @@ class GreggLimperBot:
                 await message.channel.send("All gone <:brainlet:1300560937778155540>")
             else:
                 await message.channel.send("I can't do that right now. <:GreggLimper:975696064478847016>")
+            return
 
         # Process the message content for OpenAI
         processed_message = await self.process_message_from_discord(message)
@@ -150,12 +152,23 @@ class GreggLimperBot:
         if  not self.bot.user in message.mentions:
             return
 
-        # Create shallow copy of recent message cache for OpenAI processing and precix the message with the user's display name
+        # Create shallow copy of recent message cache for OpenAI processing
+        # Only grab self.assistant_context_length number of messages for context
+        # Prefix the message with the username "username: message" for user messages
+        # If the message is a pin or is GreggLimper, do not prefix with the username
+        recent_messages = list(self.recent_message_cache[channel_id])[:self.assistant_context_length]
+        recent_messages.reverse()
+
+        # Format conversation history, adding the user’s display name only for user messages
         conversation_history = [
             {
-                "role": msg["role"], 
-                "content": f"{msg['displayname']}: {msg['content']}" if msg["role"] == "user" else msg["content"],
-            } for msg in self.recent_message_cache[channel_id]
+                "role": msg["role"],
+                "content": (
+                    f"{msg['displayname']}: {msg['content']}"
+                    if msg["role"] == "user" else msg["content"]
+                )
+            }
+            for msg in recent_messages
         ]
 
         # Insert the system prompt to the start of the conversation history
@@ -251,36 +264,41 @@ class GreggLimperBot:
 
     async def process_message_from_discord(self, message: discord.Message) -> str:
         """Convert a Discord message to a format suitable for OpenAI processing by processing mentions, links, and image content.
-        1. Process mentions in the message content.
-        2. Replace links with titles for both user and bot messages.
-        3. Process image content by downloading, encoding, and sending to OpenAI.
-        4. Return the processed message content.
+        1. Checked if message is a pin and format accordingly
+        2. Process mentions in the message content.
+        3. Replace links with titles for both user and bot messages.
+        4. Process image content by downloading, encoding, and sending to OpenAI.
+        5. Return the processed message content.
 
         Args:
             message (discord.Message): The message object from Discord.
         Returns:
             str: The processed message content.
         """
+        # 1. Check if message is a pin and format accordingly
+        # if message.pinned:
+        #     message_content = f"{message.author.display_name} pinned a message: {message.content}"
+        #     self.logger.debug(f"Pinned message processed: {message_content}")
+        # else:
         message_content = message.content
         self.logger.debug(f"Original message content: {message_content}")
 
-        # 1. Process mentions in the message content
+        # 2. Process mentions in the message content
         message_content_without_mentions = self.replace_mentions(message_content, message.guild)
         self.logger.debug(f"After mention processing: {message_content_without_mentions}")
 
-
-        # 2. Replace links with titles for user ^ bot messages
+        # 3. Replace links with titles for user ^ bot messages
         is_bot = message.author.id == self.bot.user.id
         message_content_without_links = await self.process_links(message_content_without_mentions, is_bot)
         self.logger.debug(f"After link processing: {message_content_without_links} from_bot: {is_bot}")
 
-        # 3. Process image content by downloading, encoding, and sending to OpenAI
+        # 4. Process image content by downloading, encoding, and sending to OpenAI
         image_description = await self.process_image_content(message)
         if image_description:
             message_content_without_links += f" [Image description: {image_description}]"
         
         self.logger.debug(f"Final processed content: {message_content_without_links}")
-        # 4. Return the processed message content
+        # 5. Return the processed message content
         return message_content_without_links
 
     async def process_links(self, message_content: str, from_bot: bool = False) -> str:
@@ -654,26 +672,31 @@ class GreggLimperBot:
                 query_match = re.search(r"(?:\.com/)(\w+)", raw_url)
                 query = query_match.group(1).replace("-", " ").replace("_", " ") if query_match else "generic query"
 
-                logging.debug(f"Processing raw link: {raw_url}")
+                self.logger.debug(f"Processing raw link: {raw_url}")
 
                 # Process the link based on the domain
                 if "youtube.com" in raw_url or "youtu.be" in raw_url:
                     youtube_send, youtube_cache = await self._process_youtube_link(query=query)
+                    # Replace raw URL in both send and cache messages
                     message_to_send = message_to_send.replace(raw_url, youtube_send)
                     message_to_cache = message_to_cache.replace(raw_url, youtube_cache)
-                    logging.debug(f"Processed YouTube link: {youtube_send}")
+                    self.logger.debug(f"Processed YouTube link: {youtube_send}")
 
                 elif "giphy.com" in raw_url or "tenor.com" in raw_url:
                     gif_send, gif_cache = await self._process_gif_link(query=query)
                     message_to_send = message_to_send.replace(raw_url, gif_send)
                     message_to_cache = message_to_cache.replace(raw_url, gif_cache)
-                    logging.debug(f"Processed GIF link: {gif_send}")
+                    self.logger.debug(f"Processed GIF link: {gif_send}")
 
                 else:
                     generic_send, generic_cache = await self._process_generic_link(query=query)
                     message_to_send = message_to_send.replace(raw_url, generic_send)
                     message_to_cache = message_to_cache.replace(raw_url, generic_cache)
-                    logging.debug(f"Processed generic link: {generic_send}")
+                    self.logger.debug(f"Processed generic link: {generic_send}")
+
+            # Final debug logs for message content
+            self.logger.debug(f"Final message to send: {message_to_send}")
+            self.logger.debug(f"Final message to cache: {message_to_cache}")
 
         return message_to_send, message_to_cache
 
@@ -931,17 +954,26 @@ class GreggLimperBot:
             return base64.b64encode(await image_file.read()).decode('utf-8')
         
     async def _process_youtube_link(self, query: str) -> Tuple[str, str]:
-        """Search youtube for the given query and format the response for the discord message and cache entry.
-        
+        """Search YouTube for the given query and format the response for the Discord message and cache entry.
+
         Args:
             query (str): The search query for YouTube.
         Returns:
             tuple: The formatted YouTube link and cache entry (message_to_send, message_to_cache).
         """
         title, author, description, url = await self.search_youtube(query=query)
+        
         if title and author and url:
-            description_display = description if description else "No description available"
-            return f"[{title}](<{url}>)", f"[{title} ~|~ {author} ~|~ {description_display}](YT_Video)"
+            # Clean up title, author, and description to remove newlines and extra spaces
+            title = title.replace("\n", " ").strip()
+            author = author.replace("\n", " ").strip()
+            description_display = (description or "No description available").replace("\n", " ").strip()
+
+            # Format for message and cache
+            message_to_send = f"[{title}](<{url}>)"
+            message_to_cache = f"[{title} ~|~ {author} ~|~ {description_display}](YT_Video)"
+            
+            return message_to_send, message_to_cache
         else:
             return "YouTube search returned no results.", "[Error fetching YouTube data](YT_Video)"
 

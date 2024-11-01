@@ -8,6 +8,7 @@ import aiofiles
 import base64
 import tempfile
 import logging
+import urllib.parse
 from collections import deque
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta, timezone
@@ -61,6 +62,7 @@ class GreggLimperBot:
         self.client = OpenAI(api_key=self.openai_api_key)
         intents = discord.Intents.default()
         intents.message_content = True
+        intents.members = True
         intents.reactions = True
         self.bot = discord.Client(intents=intents)
         self.youtube_client = build("youtube", "v3", developerKey=self.google_api_key)
@@ -73,11 +75,10 @@ class GreggLimperBot:
 
         # Loggers :O
         self.logger = logging.getLogger("GreggLimperBot")
-        self.logger.setLevel(logging.INFO)
+        self.logger.setLevel(logging.DEBUG)
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
         self.logger.addHandler(handler)
-
 
     def run(self) -> None:
         self.bot.run(self.discord_api_token)
@@ -126,15 +127,11 @@ class GreggLimperBot:
         # Check the message content for the /lobotomy command
         if message.content.startswith(f"<@{self.bot.user.id}>") and message.content.strip().endswith("/lobotomy"):
             # Clear the cache for the channel
-            self.recent_message_cache[channel_id].clear()
-            
-            # Check if the deque is now empty
-            if not self.recent_message_cache[channel_id]:
+            if self.clear_cache(channel_id):
                 await message.channel.send("All gone <:brainlet:1300560937778155540>")
             else:
-                await message.channel.send("Failed to clear history.")
-            return
-        
+                await message.channel.send("I can't do that right now. <:GreggLimper:975696064478847016>")
+
         # Process the message content for OpenAI
         processed_message = await self.process_message_from_discord(message)
 
@@ -268,13 +265,14 @@ class GreggLimperBot:
         self.logger.debug(f"Original message content: {message_content}")
 
         # 1. Process mentions in the message content
-        message_content_without_mentions = self.replace_mentions(message_content)
+        message_content_without_mentions = self.replace_mentions(message_content, message.guild)
         self.logger.debug(f"After mention processing: {message_content_without_mentions}")
 
 
         # 2. Replace links with titles for user ^ bot messages
-        message_content_without_links = await self.process_links(message_content_without_mentions, from_bot=message.author.id == self.bot.user.id)
-        self.logger.debug(f"After link processing: {message_content_without_links}")
+        is_bot = message.author.id == self.bot.user.id
+        message_content_without_links = await self.process_links(message_content_without_mentions, is_bot)
+        self.logger.debug(f"After link processing: {message_content_without_links} from_bot: {is_bot}")
 
         # 3. Process image content by downloading, encoding, and sending to OpenAI
         image_description = await self.process_image_content(message)
@@ -301,19 +299,24 @@ class GreggLimperBot:
             return message_content
 
         if from_bot:
-            # Define patterns for bot-generated links with titles, descriptions, etc.
+            # Patterns for bot-generated links
             youtube_pattern = re.compile(r"\[(?!.*?~\|~).*?]\(<?(https?://(?:www\.)?(youtube\.com/watch\?v=|youtu\.be/)[\w-]+)>?\)")
             gif_pattern = re.compile(r"\[(?!.*?~\|~).*?]\(<?(https?://\S*\.(?:giphy|tenor)\.com/\S+)>?\)")
             link_pattern = re.compile(r"\[(?!.*?~\|~).*?]\(<?(https?://\S+)>?\)")
         else:
-            # Define patterns for user-generated links (just URLs)
-            youtube_pattern = re.compile(r"(https?://(?:www\.)?(youtube\.com/watch\?v=|youtu\.be/)([A-Za-z0-9_-]{11}))")
-            gif_pattern = re.compile(r"(https?://\S*\.(?:giphy|tenor)\.com/\S+)")
+            # Patterns for user-generated links (just URLs)
+            youtube_pattern = re.compile(r"(https?://(?:www\.)?(youtube\.com/watch\?v=|youtu\.be/)([A-Za-z0-9_-]{11}))[^\s>]*")
+            gif_pattern = re.compile(r"(https?://(?:\S+\.)?(?:giphy|tenor)\.com/\S+)")
             link_pattern = re.compile(r"(https?://\S+)")
+
+        def clean_url(url):
+            # Parse and rebuild URL without query or fragment
+            parsed_url = urllib.parse.urlparse(url)
+            return f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
 
         # Process YouTube links
         for match in youtube_pattern.finditer(message_content):
-            url = match.group(1)
+            url = clean_url(match.group(1))
             title, author, description, _ = await self.search_youtube(url=url)
             if title and author:
                 description_display = description if description else "No description available"
@@ -323,7 +326,7 @@ class GreggLimperBot:
 
         # Process GIF links
         for match in gif_pattern.finditer(message_content):
-            url = match.group(1)
+            url = clean_url(match.group(1))
             title, description, _ = await self.search_gif(url=url)
             description_display = description if description else "No description available"
             formatted_gif = f"[{title} ~|~ {description_display}](GIF)"
@@ -332,7 +335,7 @@ class GreggLimperBot:
 
         # Process general links
         for match in link_pattern.finditer(message_content):
-            url = match.group(1)
+            url = clean_url(match.group(1))
             title, description = await self.fetch_link_data(url)
             description_display = description if description else "No description available"
             formatted_link = f"[{title} ~|~ {description_display}](LINK)"
@@ -415,19 +418,18 @@ class GreggLimperBot:
         # Return None if no image attachments are found
         return None
  
-    def replace_mentions(self, message: str) -> str:
+    def replace_mentions(self, message: str, guild: discord.Guild) -> str:
         """Replace all user, role, and channel mentions in the message content with their display names, 
         and remove mentions of the bot itself.
         
         Args:
             message (str): The content of the message.
+            guild (discord.Guild): The guild to fetch members, roles, and channels from.
+            
         Returns:
             str: The content with mentions replaced by display names and the bot's mention removed.
         """
         bot_id = self.bot.user.id  # Store the bot's ID for comparison
-        users = self.bot.guilds[0].members
-        roles = self.bot.guilds[0].roles
-        channels = self.bot.guilds[0].channels
         
         # Replace any mentions in the response with display names for users, names for roles, or names for channels
         def replace_mention(match):
@@ -438,15 +440,15 @@ class GreggLimperBot:
                 return ""  # Return empty string to remove mention of the bot
             
             if match.group(1):  # User mention
-                user = next((u for u in users if u.id == mention_id), None)
+                user = guild.get_member(mention_id)
                 return user.display_name if user else "<Unknown User>"
 
             elif match.group(2):  # Role mention
-                role = next((r for r in roles if r.id == mention_id), None)
+                role = guild.get_role(mention_id)
                 return role.name if role else "<Unknown Role>"
 
             elif match.group(3):  # Channel mention
-                channel = next((c for c in channels if c.id == mention_id), None)
+                channel = guild.get_channel(mention_id)
                 return channel.name if channel else "<Unknown Channel>"
 
         # This regex matches user mentions (<@userID> or <@!userID>), role mentions (<@&roleID>), and channel mentions (<#channelID>)
@@ -569,7 +571,8 @@ class GreggLimperBot:
 
         # Process general message
         if action["message"]:
-            message_to_send = self.replace_mentions(action["message"])  # Ensure mentions are processed correctly
+            # Replace mentions in the message content and process hallucinated links
+            message_to_send = self.replace_mentions(action["message"], target_message.guild)
             message_to_send, message_to_cache = await self.process_hallucinated_link_reply(message_to_send)
 
         # Process YouTube action
@@ -643,29 +646,34 @@ class GreggLimperBot:
             self.logger.info("Processing raw link without markers")
 
             # Find all raw URLs in the message (https:// or http://)
-            raw_url_pattern = re.compile(r"(https?://\S+)")
+            raw_url_pattern = re.compile(r"https?://[^\s]+")
             for raw_url_match in raw_url_pattern.finditer(message):
                 raw_url = raw_url_match.group(0)
 
                 # Extract the new query from the URL and process the link
-                query_match = re.search(r"(?:\.com/)(\S+)", raw_url)
+                query_match = re.search(r"(?:\.com/)(\w+)", raw_url)
                 query = query_match.group(1).replace("-", " ").replace("_", " ") if query_match else "generic query"
+
+                logging.debug(f"Processing raw link: {raw_url}")
 
                 # Process the link based on the domain
                 if "youtube.com" in raw_url or "youtu.be" in raw_url:
                     youtube_send, youtube_cache = await self._process_youtube_link(query=query)
                     message_to_send = message_to_send.replace(raw_url, youtube_send)
                     message_to_cache = message_to_cache.replace(raw_url, youtube_cache)
+                    logging.debug(f"Processed YouTube link: {youtube_send}")
 
                 elif "giphy.com" in raw_url or "tenor.com" in raw_url:
                     gif_send, gif_cache = await self._process_gif_link(query=query)
                     message_to_send = message_to_send.replace(raw_url, gif_send)
                     message_to_cache = message_to_cache.replace(raw_url, gif_cache)
+                    logging.debug(f"Processed GIF link: {gif_send}")
 
                 else:
                     generic_send, generic_cache = await self._process_generic_link(query=query)
                     message_to_send = message_to_send.replace(raw_url, generic_send)
                     message_to_cache = message_to_cache.replace(raw_url, generic_cache)
+                    logging.debug(f"Processed generic link: {generic_send}")
 
         return message_to_send, message_to_cache
 
@@ -735,7 +743,10 @@ class GreggLimperBot:
         try:
             # Search Giphy with query if provided
             if query:
-                giphy_url = f"https://api.giphy.com/v1/gifs/search?api_key={self.giphy_api_key}&q={query}&limit=1"
+                # Limit length to prevent 414 errors
+                query = query[:100]
+                encoded_query = urllib.parse.quote(query)
+                giphy_url = f"https://api.giphy.com/v1/gifs/search?api_key={self.giphy_api_key}&q={encoded_query}&limit=1"
                 async with aiohttp.ClientSession() as session:
                     async with session.get(giphy_url) as response:
                         if response.status == 200:
@@ -858,6 +869,22 @@ class GreggLimperBot:
             return "No summary available" 
 
 # ==================== Utility Functions ====================
+
+    def clear_cache(self, channel_id: int) -> bool:
+        """Clear the recent message cache for the specified channel.
+        
+        Args:
+            channel_id (int): The ID of the channel to clear the cache for.
+        Returns:
+            bool: True if the cache was cleared successfully, False otherwise.
+        """
+        self.recent_message_cache[channel_id].clear()
+        if self.recent_message_cache[channel_id]:
+            self.logger.error(f"Failed to clear cache for channel {channel_id}")
+            return False
+        else:
+            self.logger.info(f"Cleared cache for channel {channel_id}")
+            return True
 
     def show_cache(self, show_names: bool = False) -> Dict[Union[int, str], List[MessageEntry]]:
         """Displays the contents of the recent message cache for each allowed channel.

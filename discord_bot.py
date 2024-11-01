@@ -18,6 +18,8 @@ from googleapiclient.discovery import build
 from config import CONFIG
 from typing import Tuple, List, Dict, Optional, Union, Deque
 
+# TODO: Potentially append multiple user messages to a single "user" role reply, instead of sending multiple
+
 # Define type aliases for complex structures
 MessageEntry = Dict[str, Union[str, int]]
 ConversationHistory = List[MessageEntry]
@@ -152,27 +154,8 @@ class GreggLimperBot:
         if  not self.bot.user in message.mentions:
             return
 
-        # Create shallow copy of recent message cache for OpenAI processing
-        # Only grab self.assistant_context_length number of messages for context
-        # Prefix the message with the username "username: message" for user messages
-        # If the message is a pin or is GreggLimper, do not prefix with the username
-        recent_messages = list(self.recent_message_cache[channel_id])[:self.assistant_context_length]
-        recent_messages.reverse()
-
-        # Format conversation history, adding the user’s display name only for user messages
-        conversation_history = [
-            {
-                "role": msg["role"],
-                "content": (
-                    f"{msg['displayname']}: {msg['content']}"
-                    if msg["role"] == "user" else msg["content"]
-                )
-            }
-            for msg in recent_messages
-        ]
-
-        # Insert the system prompt to the start of the conversation history
-        conversation_history.insert(0, {"role": "system", "content": self.system_prompt})
+        # Grab recent messages from cache and process for OpenAI query
+        conversation_history = self.process_message_for_openai(channel_id)
 
         # Send the conversation history to OpenAI for a response
         response = await self.query_gregg(conversation_history)
@@ -474,6 +457,52 @@ class GreggLimperBot:
 
         return msg_content
 
+    def process_message_for_openai(self, channel_id: int) -> ConversationHistory:
+        """Process the recent messages from the channel for OpenAI, combining consecutive messages by role.
+
+        Args:
+            channel_id (int): The ID of the channel to process.
+        Returns:
+            list: The conversation history for the channel. Format: [{"role": str, "content": str}] (oldest messages first). If a system prompt is included, it should be the first message.
+        """
+        # Reverse recent messages to maintain chronological order
+        recent_messages = list(self.recent_message_cache[channel_id])[:self.assistant_context_length]
+        recent_messages.reverse()
+
+        # Initialize an empty conversation history and variables for tracking role and content
+        conversation_history = []
+        current_role = None
+        current_content = ""
+
+        # Iterate over recent messages to combine consecutive messages by role
+        for msg in recent_messages:
+            role = msg["role"]
+            content = f"{msg['displayname']}: {msg['content']}" if role == "user" else msg["content"]
+            
+            if role == current_role:
+                # If the role is the same as the previous one, continue concatenating
+                current_content += f"\n{content}"
+            else:
+                # When the role switches, save the accumulated message and reset
+                if current_role is not None:
+                    conversation_history.append({"role": current_role, "content": current_content.strip()})
+                
+                # Start a new message block for the new role
+                current_role = role
+                current_content = content
+
+        # Append the final accumulated message
+        if current_content:
+            conversation_history.append({"role": current_role, "content": current_content.strip()})
+
+        self.logger.debug(f"Conversation history: {conversation_history}")
+
+        # Insert the system prompt at the start of the conversation history
+        conversation_history.insert(0, {"role": "system", "content": self.system_prompt})
+
+
+        return conversation_history
+
 # ==================== OpenAI Response Processing ====================
 
     async def query_gregg(self, conversation_history: ConversationHistory) -> Optional[OpenAIResponse]:
@@ -591,7 +620,7 @@ class GreggLimperBot:
         if action["message"]:
             # Replace mentions in the message content and process hallucinated links
             message_to_send = self.replace_mentions(action["message"], target_message.guild)
-            message_to_send, message_to_cache = await self.process_hallucinated_link_reply(message_to_send)
+            message_to_send, message_to_cache = await self.process_hallucinated_link_reply(message_to_send, target_message.channel.id)
 
         # Process YouTube action
         elif action.get("YouTube"):
@@ -624,16 +653,20 @@ class GreggLimperBot:
 
         return message_to_send
   
-    async def process_hallucinated_link_reply(self, message: str) -> Tuple[Optional[str], Optional[str]]:
+    async def process_hallucinated_link_reply(self, message: str, channel_id: int) -> Tuple[Optional[str], Optional[str]]:
         """Replace hallucinated links in the message content with real data from searches.
         Uses regex to detect if the bot is using the [...](Marker) format or sending raw links.
         Args:
             message (str): The message content to process.
+            channel_id (int): The ID of the channel the message is from.
         Returns:
             tuple[str, str]: The message content with hallucinated links replaced with real data [message_to_send, message_to_cache]
         """
         message_to_send = message
         message_to_cache = message
+
+        # Log hallucinated message
+        self.logger.debug(f"Hallucinated message: {message}")
 
         # Process hallucinated links with markers ([...](Marker))
         youtube_match = re.search(r"\[.*\]\(YT_Video\)", message)
@@ -668,11 +701,9 @@ class GreggLimperBot:
             for raw_url_match in raw_url_pattern.finditer(message):
                 raw_url = raw_url_match.group(0)
 
-                # Extract the new query from the URL and process the link
-                query_match = re.search(r"(?:\.com/)(\w+)", raw_url)
-                query = query_match.group(1).replace("-", " ").replace("_", " ") if query_match else "generic query"
-
-                self.logger.debug(f"Processing raw link: {raw_url}")
+                # Generate a relevant search query based on the recent messages in the channel
+                query = await self.request_search_query(channel_id)
+                self.logger.debug(f"Generated query for raw link {raw_url}: {query}")
 
                 # Process the link based on the domain
                 if "youtube.com" in raw_url or "youtu.be" in raw_url:
@@ -857,6 +888,34 @@ class GreggLimperBot:
         except Exception as e:
             self.logger.error(f"Error searching YouTube: {str(e)}")
             return None, None, None, None
+
+    async def request_search_query(self, channel_id: int) -> str:
+        """Generate a search query based on the recent messages in the channel"""
+
+        # Get the recent messages in reverse order to maintain chronological order
+        recent_messages = list(self.recent_message_cache[channel_id])[:self.assistant_context_length]
+        recent_messages.reverse()
+
+        # Format the conversation history for OpenAI
+        conversation_history = self.process_message_for_openai(channel_id)
+
+        # Send to OpenAI to generate a query
+        try:
+            response = self.client.chat.completions.create(
+                model=self.fine_tuned_model,
+                messages=conversation_history,
+                max_tokens=20,
+                temperature=0.6
+            )
+
+            # Extract the suggested search term from the response
+            search_query = response.choices[0].message.content.strip() if response.choices else "default search query"
+            self.logger.debug(f"Generated search query: {search_query}")
+            return search_query
+
+        except Exception as e:
+            self.logger.error(f"Error generating search query: {e}")
+            return "default search query"
 
     async def summarize_description(self, description: str) -> str:
         """Generate a succinct summary of a long YouTube/other description using OpenAI.

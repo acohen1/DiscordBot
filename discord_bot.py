@@ -30,6 +30,7 @@ GreggAction = Dict[str, Optional[Union[str, Dict[str, Optional[str]]]]]
 RecentMessageCache = Dict[int, Deque[MessageEntry]]
 GIFData = Tuple[Optional[str], Optional[str], Optional[str]]
 YouTubeData = Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]
+LinkResult = Optional[Tuple[str, str]]  # Return type for _process_* methods
 
 class GreggLimperBot:
     def __init__(self) -> None:
@@ -55,6 +56,7 @@ class GreggLimperBot:
         self.cached_history_length = CONFIG["CACHED_HISTORY_LENGTH"]
         self.assistant_context_length = CONFIG["ASSISTANT_CONTEXT_LENGTH"]
         self.reaction_history_length = CONFIG["REACTION_HISTORY_LENGTH"]
+        self.gregg_limper_attributes = CONFIG["GREGG_LIMPER_ATTRIBUTES"]
         self.system_prompt = CONFIG["SYSTEM_PROMPT"]
 
         # API keys and tokens
@@ -80,20 +82,20 @@ class GreggLimperBot:
 
         # Loggers :O
         self.logger = logging.getLogger("GreggLimperBot")
-        self.logger.setLevel(logging.DEBUG)
+        self.logger.setLevel(logging.INFO)
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
         self.logger.addHandler(handler)
 
     def run(self) -> None:
+        """Start tge bot using the initiaized Discord API token."""
         self.bot.run(self.discord_api_token)
     
 # ==================== Event Handlers ====================
 
     async def on_ready(self) -> None:
-        """Event handler triggered when the bot is ready to begin processing events.
-        Load and process recent chat history from the allowed channels into the channel's deque cache.
-        """
+        """Event handler triggered on bot startup. Load and cache recent message history for each allowed channel."""
+        
         self.logger.info(f'Logged in as {self.bot.user}')
 
         # For each of the allowed channels, grab chat history from discord up to the cached history length and store in the deque
@@ -123,6 +125,10 @@ class GreggLimperBot:
                 self.recent_message_cache[channel_id].append(message_entry)
 
     async def on_message(self, message: discord.Message) -> None:
+        """Handle incoming messages, process its content, cache it, and send response if bot is mentioned.
+        Args:
+            message (discord.Message): The message object from Discord.
+        """
         
         # =============== INCOMING MESSAGE HANDLING ===============
 
@@ -223,13 +229,12 @@ class GreggLimperBot:
         await message.channel.send(message_to_send)
 
     async def on_reaction_add(self, reaction: discord.Reaction, user: discord.User) -> None:
-        """Event handler for when a reaction is added to a message. 
-        Fetch recent messages for training data and save to the training data file.
-
+        """Handle reactions added to messages to save context as training data.
         Args:
-            reaction (discord.Reaction): The reaction object added to the message.
-            user (discord.User): The user who added the reaction.
+            reaction (discord.Reaction): Reaction added to a message.
+            user (discord.User): User who added the reaction.
         """
+        
         channel_id = reaction.message.channel.id
         reacted_msg_time = reaction.message.created_at
 
@@ -296,16 +301,11 @@ class GreggLimperBot:
 # ==================== Discord Message Processing ====================
 
     async def process_message_from_discord(self, message: discord.Message) -> str:
-        """Convert a Discord message to a format suitable for OpenAI processing by processing mentions, links, and image content.
-        1. Process mentions in the message content.
-        2. Replace links with titles for both user and bot messages.
-        3. Process image content by downloading, encoding, and sending to OpenAI.
-        4. Return the processed message content.
-
+        """Process and clean up a Discoes message to a format compatible with OpenAI.
         Args:
             message (discord.Message): The message object from Discord.
         Returns:
-            str: The processed message content.
+            str: Cleaned-up message content after processing mentions, links, and images.
         """
         message_content = message.content
         self.logger.debug(f"Original message content: {message_content}")
@@ -329,20 +329,17 @@ class GreggLimperBot:
         return message_content
 
     def replace_mentions(self, message: str, guild: discord.Guild) -> str:
-        """Replace all user, role, and channel mentions in the message content with their display names, 
-        and remove mentions of the bot itself.
-        
+        """Replace all mentions in the message with display names or channel names.
         Args:
             message (str): The content of the message.
             guild (discord.Guild): The guild to fetch members, roles, and channels from.
-            
         Returns:
             str: The content with mentions replaced by display names and the bot's mention removed.
         """
         bot_id = self.bot.user.id  # Store the bot's ID for comparison
         
-        # Replace any mentions in the response with display names for users, names for roles, or names for channels
-        def replace_mention(match):
+        def replace(match):
+            """Replace the mention with the display name, role name, or channel name."""
             mention_id = int(match.group(1) or match.group(2) or match.group(3))
 
             # Skip the bot's mention entirely
@@ -362,20 +359,17 @@ class GreggLimperBot:
                 return channel.name if channel else "<Unknown Channel>"
 
         # This regex matches user mentions (<@userID> or <@!userID>), role mentions (<@&roleID>), and channel mentions (<#channelID>)
-        msg_content = re.sub(r"<@!?(\d+)>|<@&(\d+)>|<#(\d+)>", replace_mention, message)
+        msg_content = re.sub(r"<@!?(\d+)>|<@&(\d+)>|<#(\d+)>", replace, message)
 
         return msg_content
 
     async def process_links(self, message_content: str, from_bot: bool = False) -> str:
-        """Replace or reformat links in the message content with descriptions and content markers, using 
-        separate logic for user-generated versus bot-generated links. Titles/descriptions are fetched for
-        YouTube, GIF, and general links. If the message already contains a formatted link, it is skipped.
-
+        """Process and format links in the message content for Discord and cache.
         Args:
             message_content (str): The content of the message.
             from_bot (bool): Whether the message is from the bot.
         Returns:
-            str: The content with links replaced with titles and markers.
+            str: Message content with links replaced by formatted text.
         """
         self.logger.debug(f"process_links called with content: {message_content}")
 
@@ -429,14 +423,24 @@ class GreggLimperBot:
 
         return message_content
 
+    # TODO: see if we should keep gregg limper attributes in the prompt.
     async def process_image_content(self, message: discord.Message) -> Optional[str]:
-        """Process image attachments in a message by downloading, encoding, and sending to OpenAI.
-        
+        """Process image attachments and generate a description.
         Args:
             message (discord.Message): The message object with image attachments.
         Returns:
-            str: The description of the image content, or None if no image attachments are found or if an error occurs.
+            Optional[str]: Description of image content or None if no image is found.
         """
+        system_prompt = f(
+            "You are Gregg Limper\n\n"
+            f"{self.gregg_limper_attributes}\n\n"
+            "Your purpose is to provide a description of the image content in the message.\n\n"
+            "Provide a succinct description useful for someone who can't see it. "
+            "Include any relevant text or context in the image."
+            "Respond in a way that reflects Gregg Limper's personality and style."
+        )
+        user_prompt = "What is in this image? Provide a succinct description useful for someone who can't see it."
+
         for attachment in message.attachments:
             # Check if the attachment is an image
             if attachment.content_type and 'image' in attachment.content_type:
@@ -466,19 +470,8 @@ class GreggLimperBot:
                     response = await self.client.chat.completions.create(
                         model=self.image_detection_model,
                         messages=[
-                            {
-                                "role": "user",
-                                "content": [
-                                    {
-                                        "type": "text",
-                                        "text": "What is in this image? Provide a succinct description useful for someone who can't see it."
-                                    },
-                                    {
-                                        "type": "image_url",
-                                        "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
-                                    },
-                                ],
-                            }
+                            { "role" : "system", "content" : system_prompt },
+                            { "role" : "user", "content" : user_prompt },
                         ],
                         max_tokens=300,
                     )
@@ -504,27 +497,27 @@ class GreggLimperBot:
  
 # ==================== OpenAI Response Processing ====================
 
-    async def determine_content_type(self, channel_id: int, retries: int = 3) -> Optional[str]:
-        """Prompt OpenAI to return the desired content type: "message", "GIF", "YouTube", or "Website".
-        
+    async def determine_content_type(self, channel_id: int, max_retries: int = 3) -> Optional[str]:
+        """Determine appropriate content type for response based on chat history.
         Args:
-            channel_id (int): The ID of the channel to determine the content type for.
-            retries (int): The number of retries to attempt if an error occurs.
+            channel_id (int): Channel ID to retrieve history from.
+            max_retries (int): Number of retry attempts in case of error.
         Returns:
-            str: The content type determined by OpenAI, or None if an error occurs.
+            Optional[str]: 'message', 'GIF', 'YouTube', or 'Website' or None if determination fails.
         """
+
         prompt = "Based on the chat history, reply with one word that best describes the type of response that would be most relevant and helpful: \
-        'message', 'GIF', 'YouTube', or 'Website'. Do not provide any additional text or explanations. ONLY REPLY WITH ONE OF THE FOLLOWING WORDS: \
+        'message', 'GIF', 'YouTube', or 'Website'. Do not provide any additional text or explanations. **ONLY REPLY WITH ONE OF THE FOLLOWING WORDS:** \
         message, GIF, YouTube, or Website."
 
         conversation_history = self.process_cache_for_openai(channel_id, custom_prompt=prompt)
-        for attempt in range(retries):
+        for attempt in range(max_retries):
             try:
                 response = self.client.chat.completions.create(
                     model="gpt-4o",
                     messages=conversation_history,
                     max_tokens=10,
-                    temperature=0.2,
+                    temperature=0.2 + (0.2 * attempt),  # Increase temperature with each attempt
                 )
                 content_type = response.choices[0].message.content.strip().lower()
                 
@@ -537,11 +530,11 @@ class GreggLimperBot:
                 self.logger.error(f"Error determining content type on attempt {attempt + 1}: {str(e)}")
 
         # If all attempts fail, return None
-        self.logger.error(f"Failed to determine content type after {retries} attempts. Defaulting to 'message'.")
+        self.logger.error(f"Failed to determine content type after {max_retries} attempts. Defaulting to 'message'.")
         return None
 
     async def query_gregg_for_message(self, channel_id: int) -> Optional[str]:
-        """Fetch a normal text message response from OpenAI (unprocessed).
+        """Query Gregg Limper for a message response based on the recent chat history.
         Args:
             channel_id (int): The ID of the channel to fetch the message for.
         Returns:
@@ -561,7 +554,7 @@ class GreggLimperBot:
             return None
     
     async def request_search_query(self, channel_id: int) -> Optional[str]:
-        """Generate a search query based on the recent messages in the channel
+        """Generate a search query based on recent messages in the channel
         Args:
             channel_id (int): The ID of the channel to generate the search query for.
         Returns:
@@ -569,9 +562,14 @@ class GreggLimperBot:
         """
 
         # Format the conversation history for OpenAI
-        prompt = "Based on the recent chat history, provide a search query that most effectively addresses or supports the latest message's content. \
-        The query can help reinforce or critique the topic, leaning toward relevant sources. Reply only with the search query. \
-        Do not provide the link, just the title of the content you would like to find. **Never** reuse the same media within the same conversation."
+        prompt = f"""
+        You are Gregg Limper.
+        {self.gregg_limper_attributes}
+        Based on the recent chat history, generate a concise search query that directly supports or addresses the latest message's content.
+        Limit the query length to ensure clarity and relevance in a response. Reply only with the query itself—no links or media.
+        Do not reuse the same media or queries within the same conversation.
+        """
+
         conversation_history = self.process_cache_for_openai(channel_id, custom_prompt=prompt)
 
         # Send to OpenAI to generate a query
@@ -595,13 +593,13 @@ class GreggLimperBot:
 # ==================== Search Functions ====================
 
     async def search_youtube(self, query: Optional[str] = None, url: Optional[str] = None) -> YouTubeData:
-        """Search Youtube and return the top video result.
-
+        """Search Youtube and return the top video result or details of a specific video URL.
         Args:
-            query (str): The search query for Youtube.
-            url (str): The Youtube video URL.
+            query (Optional[str]): The search query for Youtube.
+            url (Optional[str]): The Youtube video URL.
         Returns:
-            tuple: The title, author, description, and url of the top Youtube video result, or None if no results are found.
+            Optional[YouTubeData]: A tuple containing the title, author, description, and URL of the top video result, 
+            or None if no results are found.
         """
         try:
             # Search by query
@@ -656,17 +654,16 @@ class GreggLimperBot:
 
     async def search_gif(self, query: Optional[str] = None, url: Optional[str] = None) -> GIFData:
         """Search Giphy and return the GIF title, description (if available), and URL.
-        
         Args:
             query (str): The search query for Giphy.
             url (str): The GIF URL.
-
         Returns:
             tuple: The title, description, and URL of the top GIF result, or None if no results are found.
         """
         if not (query or url):
             self.logger.error("Must specify either query or url for search_gif")
             return None
+        
         try:
             # Handle direct URL case
             if url and not query:
@@ -674,7 +671,7 @@ class GreggLimperBot:
                 return title, description, url
 
             # Limit length to prevent 414 errors
-            query = query[:100]
+            query = query[:50]
             encoded_query = urllib.parse.quote(query)
             giphy_url = f"https://api.giphy.com/v1/gifs/search?api_key={self.giphy_api_key}&q={encoded_query}&limit=1"
             
@@ -712,7 +709,6 @@ class GreggLimperBot:
 
     async def search_google(self, query: str, num_results=1) -> Optional[Tuple[str, str, str]]:
         """Search Google and return the top search result.
-
         Args:
             query (str): The search query for Google.
             num_results (int): The number of search results to return (default 1).
@@ -735,13 +731,12 @@ class GreggLimperBot:
             self.logger.error(f"Error searching Google: {str(e)}")
             return []
 
-    async def fetch_link_data(self, url: str) -> Tuple[Optional[str], Optional[str]]:
-        """Fetch the title of a webpage using BeautifulSoup.
-        
+    async def fetch_link_data(self, url: str) -> Optional[Tuple[str, str]]:
+        """Fetch the title and description of a webpage using BeautifulSoup. 
         Args:
             url (str): The URL of the webpage.
         Returns:
-            tuple: The title and description of the webpage, or None if an error occurs.
+            Optional[Tuple[str, str]]: The title and description of the webpage, or None if an error occurs.
         """
         try:
             async with aiohttp.ClientSession() as session:
@@ -765,13 +760,13 @@ class GreggLimperBot:
 # ==================== Utility Functions ====================
 
     def process_cache_for_openai(self, channel_id: int, custom_prompt: Optional[str]=None) -> ConversationHistory:
-        """Process the recent messages in the specified channel's cache deque for OpenAI input.
-
+        """Process the recent messages in the specified channel's cache for OpenAI input.
         Args:
             channel_id (int): The ID of the channel to process.
-            prompt (str): An optional system prompt to include at the start of the conversation history. Defaults to self.system_prompt).
+            custom_prompt (Optional[str]): A custom system prompt to include at the start of the conversation history.
         Returns:
-            list: The conversation history for the channel. Format: [{"role": str, "content": str}] (oldest messages first). If a system prompt is included, it should be the first message.
+            ConversationHistory: A list of conversation entries in the format {"role": str, "content": str} (oldest messages first),
+            with an optional system prompt as the first entry.
         """
         # Reverse recent messages to maintain chronological order
         recent_messages = list(self.recent_message_cache[channel_id])[:self.assistant_context_length]
@@ -814,7 +809,6 @@ class GreggLimperBot:
 
     def clear_cache(self, channel_id: int) -> bool:
         """Clear the recent message cache for the specified channel.
-        
         Args:
             channel_id (int): The ID of the channel to clear the cache for.
         Returns:
@@ -830,12 +824,10 @@ class GreggLimperBot:
 
     def show_cache(self, show_names: bool = False) -> Dict[Union[int, str], List[MessageEntry]]:
         """Displays the contents of the recent message cache for each allowed channel.
-        
         Args:
-            show_names (bool): Whether to display the display names of users or not (defaults to IDs)
-
+            show_names (bool): Whether to display the display names of users (defaults to False, showing IDs).
         Returns:
-            dict: Cache contents with either channel IDs or names based on the show_names flag.
+            Dict[Union[int, str], List[MessageEntry]]: A dictionary of cache contents with either channel IDs or names as keys.
         """
         cache_contents = {}
         
@@ -861,19 +853,25 @@ class GreggLimperBot:
         
         return cache_contents
 
+    # TODO: see if we should keep gregg limper attributes in the summarize description function
     async def summarize_description(self, description: str) -> str:
-        """Generate a succinct summary of the given description using GreggLimper OpenAI.
-
+        """Generate a succinct summary of the provided description using GreggLimper.
         Args:
-            description (str): The full description of a YouTube video.
-
+            description (str): The full description text to summarize.
         Returns:
-            str: A succinct summary of the description.
+            str: A concise summary of the description, or "No summary available" if an error occurs.
         """
         try:
             # Construct a prompt for generating a succinct summary
-            prompt = (
-                "Create a concise, one- to two-sentence summary for the following description:\n\n"
+            system_prompt = (
+                f"You are Gregg Limper\n\n"
+                f"{self.gregg_limper_attributes}\n\n"
+                "Your purpose is to provide a concise summary of text descriptions."
+                "Respond in a way that reflects Gregg Limper's personality and style."
+            )
+
+            user_prompt = (
+                f"Create a concise, one- to two-sentence summary for the following description:\n\n"
                 f"{description}\n\n"
                 "Summary:"
             )
@@ -881,8 +879,8 @@ class GreggLimperBot:
             response = self.client.chat.completions.create(
                 model=self.fine_tuned_model,
                 messages=[
-                    {"role": "system", "content": "You are a summarization asssistant."},
-                    {"role": "user", "content": prompt}
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
                 ],
                 max_tokens=50,
                 temperature=0.7
@@ -897,24 +895,24 @@ class GreggLimperBot:
             return "No summary available" 
 
     async def encode_image_base64(self, image_path: str) -> str:
-        """Encode an image at the specified path to base64.
-        
+        """Encode an image at the specified path to base64 format.
         Args:
-            image_path (str): The path to the image file.
+            image_path (str): The path of the image to encode.
         Returns:
-            str: The base64 encoded image.
+            str: The base64 encoded string of the image.
         """
         async with aiofiles.open(image_path, "rb") as image_file:
             return base64.b64encode(await image_file.read()).decode('utf-8')
         
     async def _process_youtube_link(self, query: Optional[str] = None, url: Optional[str] = None) -> Optional[Tuple[str, str]]:
-        """Search YouTube for the given query and format the response for the Discord message and cache entry.
-
+        """Search YouTube for the given query or URL and format the response for a Discord message and cache entry.
+    
         Args:
-            query (str): The search query for YouTube.
-            url (str): The YouTube video URL.
+        query (Optional[str]): The search query for YouTube.
+        url (Optional[str]): The YouTube video URL.
+    
         Returns:
-            tuple: The formatted YouTube link and cache entry (message_to_send, message_to_cache).
+        Optional[Tuple[str, str]]: A tuple containing the formatted YouTube link and cache entry, or None if an error occurs.
         """
         
         if not (query or url):
@@ -986,13 +984,12 @@ class GreggLimperBot:
             return None
 
     async def _process_gif_link(self, query: Optional[str] = None, url: Optional[str] = None) -> Optional[Tuple[str, str]]:
-        """Search GIf for the given query and format the response for the discord message and cache entry.
-        
+        """Search Giphy for the given query or URL and format the response for a Discord message and cache entry.
         Args:
-            query (str): The search query for GIF.
-            url (str): The GIF URL.
+            query (Optional[str]): The search query for GIF.
+            url (Optional[str]): The GIF URL.
         Returns:
-            tuple: The formatted YouTube link and cache entry (message_to_send, message_to_cache).
+            Optional[Tuple[str, str]]: A tuple containing the formatted GIF link and cache entry, or None if an error occurs
         """
         if not (query or url):
             logging.error("Must specify either query or url for _process_gif_link")
@@ -1049,12 +1046,13 @@ class GreggLimperBot:
             return None
    
     async def _process_generic_link(self, query: Optional[str] = None, url: Optional[str] = None, num_results=1) -> Optional[Tuple[str, str]]:
-        """Search Google for the given query and format the response for the discord message and cache entry.
-        
+        """Search Google for the given query or BeautifulSoup for the given URL, and format the response for a Discord message and cache entry.
         Args:
-            query (str): The search query for Google.
+            query (Optional[str]): The search query for Google.
+            url (Optional[str]): The URL to process.
+            num_results (int): The number of search results to retrieve (default 1).
         Returns:
-            tuple: The formatted YouTube link and cache entry (message_to_send, message_to_cache).
+            Optional[Tuple[str, str]]: A tuple containing the formatted website link and cache entry, or None if an error occurs.
         """
         if not (query or url):
             logging.error("Must specify either query or url for _process_generic_link")

@@ -431,7 +431,7 @@ class GreggLimperBot:
         Returns:
             Optional[str]: Description of image content or None if no image is found.
         """
-        system_prompt = f(
+        system_prompt = (
             "You are Gregg Limper\n\n"
             f"{self.gregg_limper_attributes}\n\n"
             "Your purpose is to provide a description of the image content in the message.\n\n"

@@ -18,9 +18,7 @@ from googleapiclient.discovery import build
 from config import CONFIG
 from typing import Tuple, List, Dict, Optional, Union, Deque
 
-# TODO: Potentially append multiple user messages to a single "user" role reply, instead of sending multiple
-
-# TODO: Fix image attachment processing: currently [Image Description: ...] is not showing up in the cache
+# TODO: Investigate ways to remove " - Discover & Share GIFs" from Giphy titles
 
 # Define type aliases for complex structures
 MessageEntry = Dict[str, Union[str, int]]
@@ -86,6 +84,7 @@ class GreggLimperBot:
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
         self.logger.addHandler(handler)
+        self.logger.propagate = False
 
     def run(self) -> None:
         """Start tge bot using the initiaized Discord API token."""

@@ -7,8 +7,9 @@ import logging
 
 app = Flask(__name__)
 gregg_limper_bot = GreggLimperBot()
-log = logging.getLogger('werkzeug')
-log.setLevel(logging.ERROR)
+
+werkzeug_logger = logging.getLogger('werkzeug')
+werkzeug_logger.setLevel(logging.WARNING)
 
 # Custom filter to convert timestamps to EST
 @app.template_filter('to_est_time')

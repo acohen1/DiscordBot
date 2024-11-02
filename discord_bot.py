@@ -20,6 +20,8 @@ from typing import Tuple, List, Dict, Optional, Union, Deque
 
 # TODO: Potentially append multiple user messages to a single "user" role reply, instead of sending multiple
 
+# TODO: Fix image attachment processing: currently [Image Description: ...] is not showing up in the cache
+
 # Define type aliases for complex structures
 MessageEntry = Dict[str, Union[str, int]]
 ConversationHistory = List[MessageEntry]
@@ -121,8 +123,10 @@ class GreggLimperBot:
                 self.recent_message_cache[channel_id].append(message_entry)
 
     async def on_message(self, message: discord.Message) -> None:
-        """Event handler triggered when a message is sent in a channel."""
+        
         # =============== INCOMING MESSAGE HANDLING ===============
+
+        # Check if the message is from the bot or not in an allowed channel
         channel_id = message.channel.id
         if message.author == self.bot.user or channel_id not in self.allowed_channel_ids:
             return
@@ -135,8 +139,8 @@ class GreggLimperBot:
             else:
                 await message.channel.send("I can't do that right now. <:GreggLimper:975696064478847016>")
             return
-
-        # Process the message content for OpenAI
+        
+        # Process the message content (replace links, mentions, and image content)
         processed_message = await self.process_message_from_discord(message)
 
         # Append the processed message to the channel's deque cache
@@ -150,26 +154,72 @@ class GreggLimperBot:
 
         # =============== OPENAI RESPONSE PROCESSING ===============
 
-        # Check if the bot was mentioned in the message
-        if  not self.bot.user in message.mentions:
+        # Check if bot was mentioned in the message
+        if not self.bot.user in message.mentions:
             return
 
-        # Grab recent messages from cache and process for OpenAI query
-        conversation_history = self.process_message_for_openai(channel_id)
-
-        # Send the conversation history to OpenAI for a response
-        response = await self.query_gregg(conversation_history)
-
-        # Check if OpenAI returned a response
-        if not response:
-            self.logger.error("OpenAI response is None. Skipping message processing.")
+        # Determine the content type to send based on the chat history
+        content_type = await self.determine_content_type(channel_id)
+        if not content_type:
+            logging.error("Error determining content type.")
             return
 
-        # Query the assistant's replied action (regular message, YouTube search, or GIF search)
-        action_dir = await self.process_openai_response(response)
+        message_to_cache = ""
+        message_to_send = ""
+        
+        # Query Gregg Limper for a message response
+        if content_type == "message":
+            logging.info("Querying Gregg Limper for a text message response")
+            # Query Gregg Limper for a text message response
+            assistant_reply = await self.query_gregg_for_message(channel_id)
 
-        # Process the action (saves it to cache) and send message to discord
-        message_to_send = await self.process_gregg_action(message, action_dir)
+            # Remove any mentions in the assistant's reply
+            message_to_send = self.replace_mentions(assistant_reply, message.guild)
+            message_to_cache = message_to_send
+
+        # Query Gregg Limper for Media content
+        else:
+            logging.info(f"Querying Gregg Limper for {content_type} content")
+            query = await self.request_search_query(channel_id)
+            if not query:
+                logging.error("Error generating search query for media content.")
+                return
+            
+            logging.info(f"Generated media query: {query}")
+            if content_type == "gif":
+                logging.info("Querying GIF content")
+                result = await self._process_gif_link(query=query)
+                if not result:
+                    logging.error("Error querying Giphy for GIF content.")
+                    return
+                message_to_send, message_to_cache = result
+
+            elif content_type == "youtube":
+                logging.info("Querying YouTube content")
+                result = await self._process_youtube_link(query=query)
+                if not result:
+                    logging.error("Error querying YouTube for video content.")
+                    return
+                message_to_send, message_to_cache = result
+
+            elif content_type == "website":
+                logging.info("Querying website content")
+                result = await self._process_generic_link(query=query)
+                if not result:
+                    logging.error("Error querying website for content.")
+                    return
+                message_to_send, message_to_cache = result
+        
+        # Append the processed message to the channel's deque cache
+        message_entry = {
+            "displayname": "Gregg Limper",
+            "role": "assistant",
+            "content": message_to_cache,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        self.recent_message_cache[channel_id].appendleft(message_entry)
+
+        # Send the message to Discord
         await message.channel.send(message_to_send)
 
     async def on_reaction_add(self, reaction: discord.Reaction, user: discord.User) -> None:
@@ -247,47 +297,79 @@ class GreggLimperBot:
 
     async def process_message_from_discord(self, message: discord.Message) -> str:
         """Convert a Discord message to a format suitable for OpenAI processing by processing mentions, links, and image content.
-        1. Checked if message is a pin and format accordingly
-        2. Process mentions in the message content.
-        3. Replace links with titles for both user and bot messages.
-        4. Process image content by downloading, encoding, and sending to OpenAI.
-        5. Return the processed message content.
+        1. Process mentions in the message content.
+        2. Replace links with titles for both user and bot messages.
+        3. Process image content by downloading, encoding, and sending to OpenAI.
+        4. Return the processed message content.
 
         Args:
             message (discord.Message): The message object from Discord.
         Returns:
             str: The processed message content.
         """
-        # 1. Check if message is a pin and format accordingly
-        # if message.pinned:
-        #     message_content = f"{message.author.display_name} pinned a message: {message.content}"
-        #     self.logger.debug(f"Pinned message processed: {message_content}")
-        # else:
         message_content = message.content
         self.logger.debug(f"Original message content: {message_content}")
 
-        # 2. Process mentions in the message content
-        message_content_without_mentions = self.replace_mentions(message_content, message.guild)
-        self.logger.debug(f"After mention processing: {message_content_without_mentions}")
+        # 1. Process mentions in the message content
+        message_content = self.replace_mentions(message_content, message.guild)
+        self.logger.debug(f"After mention processing: {message_content}")
 
-        # 3. Replace links with titles for user ^ bot messages
+        # 2. Replace links with titles for user ^ bot messages
         is_bot = message.author.id == self.bot.user.id
-        message_content_without_links = await self.process_links(message_content_without_mentions, is_bot)
-        self.logger.debug(f"After link processing: {message_content_without_links} from_bot: {is_bot}")
+        message_content = await self.process_links(message_content, is_bot)
+        self.logger.debug(f"After link processing: {message_content} from_bot: {is_bot}")
 
-        # 4. Process image content by downloading, encoding, and sending to OpenAI
+        # 3. Process image content by downloading, encoding, and sending to OpenAI
         image_description = await self.process_image_content(message)
         if image_description:
-            message_content_without_links += f" [Image description: {image_description}]"
+            message_content += f" [Image description: {image_description}]"
         
-        self.logger.debug(f"Final processed content: {message_content_without_links}")
-        # 5. Return the processed message content
-        return message_content_without_links
+        self.logger.debug(f"Final processed content: {message_content}")
+        # 4. Return the processed message content
+        return message_content
+
+    def replace_mentions(self, message: str, guild: discord.Guild) -> str:
+        """Replace all user, role, and channel mentions in the message content with their display names, 
+        and remove mentions of the bot itself.
+        
+        Args:
+            message (str): The content of the message.
+            guild (discord.Guild): The guild to fetch members, roles, and channels from.
+            
+        Returns:
+            str: The content with mentions replaced by display names and the bot's mention removed.
+        """
+        bot_id = self.bot.user.id  # Store the bot's ID for comparison
+        
+        # Replace any mentions in the response with display names for users, names for roles, or names for channels
+        def replace_mention(match):
+            mention_id = int(match.group(1) or match.group(2) or match.group(3))
+
+            # Skip the bot's mention entirely
+            if mention_id == bot_id:
+                return ""  # Return empty string to remove mention of the bot
+            
+            if match.group(1):  # User mention
+                user = guild.get_member(mention_id)
+                return user.display_name if user else "<Unknown User>"
+
+            elif match.group(2):  # Role mention
+                role = guild.get_role(mention_id)
+                return role.name if role else "<Unknown Role>"
+
+            elif match.group(3):  # Channel mention
+                channel = guild.get_channel(mention_id)
+                return channel.name if channel else "<Unknown Channel>"
+
+        # This regex matches user mentions (<@userID> or <@!userID>), role mentions (<@&roleID>), and channel mentions (<#channelID>)
+        msg_content = re.sub(r"<@!?(\d+)>|<@&(\d+)>|<#(\d+)>", replace_mention, message)
+
+        return msg_content
 
     async def process_links(self, message_content: str, from_bot: bool = False) -> str:
         """Replace or reformat links in the message content with descriptions and content markers, using 
         separate logic for user-generated versus bot-generated links. Titles/descriptions are fetched for
-        YouTube, GIF, and general links. If the message already contains a formatted link using ~|~, it is skipped.
+        YouTube, GIF, and general links. If the message already contains a formatted link, it is skipped.
 
         Args:
             message_content (str): The content of the message.
@@ -295,55 +377,56 @@ class GreggLimperBot:
         Returns:
             str: The content with links replaced with titles and markers.
         """
-        # Skip reformatting if the message already contains a formatted link using ~|~
-        if re.search(r"\[.*? ~\|~ .*?\]\((YT_Video|GIF|LINK)\)", message_content):
-            return message_content
+        self.logger.debug(f"process_links called with content: {message_content}")
 
         if from_bot:
-            # Patterns for bot-generated links
-            youtube_pattern = re.compile(r"\[(?!.*?~\|~).*?]\(<?(https?://(?:www\.)?(youtube\.com/watch\?v=|youtu\.be/)[\w-]+)>?\)")
-            gif_pattern = re.compile(r"\[(?!.*?~\|~).*?]\(<?(https?://\S*\.(?:giphy|tenor)\.com/\S+)>?\)")
-            link_pattern = re.compile(r"\[(?!.*?~\|~).*?]\(<?(https?://\S+)>?\)")
+            # Patterns for bot-generated links (Replace [Title](URL))
+            youtube_pattern = re.compile(r"\[(?!.*:::).*?]\(<?(https?://(?:www\.)?(youtube\.com/watch\?v=|youtu\.be/)[\w-]+)>?\)")
+            gif_pattern = re.compile(r"\[(?!.*:::).*?]\(<?(https?://\S*\.(?:giphy|tenor)\.com/\S+)>?\)")
+            link_pattern = re.compile(r"\[(?!.*:::).*?]\(<?(https?://\S+)>?\)")
         else:
-            # Patterns for user-generated links (just URLs)
+            # Patterns for user-generated links (Replace the URLs) 
             youtube_pattern = re.compile(r"(https?://(?:www\.)?(youtube\.com/watch\?v=|youtu\.be/)([A-Za-z0-9_-]{11}))[^\s>]*")
             gif_pattern = re.compile(r"(https?://(?:\S+\.)?(?:giphy|tenor)\.com/\S+)")
             link_pattern = re.compile(r"(https?://\S+)")
 
-        def clean_url(url):
-            # Parse and rebuild URL without query or fragment
-            parsed_url = urllib.parse.urlparse(url)
-            return f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
 
-        # Process YouTube links
+        # Process YouTube links as [YouTube ::: {title} ::: {author} ::: {description}]
         for match in youtube_pattern.finditer(message_content):
-            url = clean_url(match.group(1))
-            title, author, description, _ = await self.search_youtube(url=url)
-            if title and author:
-                description_display = description if description else "No description available"
-                formatted_youtube = f"[{title} ~|~ {author} ~|~ {description_display}](YT_Video)"
-                message_content = message_content.replace(match.group(0), formatted_youtube)
+            url = match.group(1)
+            logging.debug(f"Processing YouTube link: {url}")
+            result = await self._process_youtube_link(url=url)
+            if not result:
+                logging.error("Error processing YouTube link.")
                 return message_content
+            _, message_to_cache = result
+            message_content = message_content.replace(match.group(0), message_to_cache)
+            return message_content
 
-        # Process GIF links
+        # Process GIF links as [GIF ::: {title} ::: {description}]
         for match in gif_pattern.finditer(message_content):
-            url = clean_url(match.group(1))
-            title, description, _ = await self.search_gif(url=url)
-            description_display = description if description else "No description available"
-            formatted_gif = f"[{title} ~|~ {description_display}](GIF)"
-            message_content = message_content.replace(match.group(0), formatted_gif)
+            url = match.group(1)
+            logging.debug(f"Processing GIF link: {url}")
+            result = await self._process_gif_link(url=url)
+            if not result:
+                logging.error("Error processing GIF link.")
+                return message_content
+            _, message_to_cache = result
+            message_content = message_content.replace(match.group(0), message_to_cache)
             return message_content
 
-        # Process general links
+        # Process general links as [Website ::: {title} ::: {description}]
         for match in link_pattern.finditer(message_content):
-            url = clean_url(match.group(1))
-            title, description = await self.fetch_link_data(url)
-            description_display = description if description else "No description available"
-            formatted_link = f"[{title} ~|~ {description_display}](LINK)"
-            message_content = message_content.replace(match.group(0), formatted_link)
+            url = match.group(1)
+            logging.debug(f"Processing general link: {url}")
+            result = await self._process_generic_link(url=url)
+            if not result:
+                logging.error("Error processing general link.")
+                return message_content
+            _, message_to_cache = result
+            message_content = message_content.replace(match.group(0), message_to_cache)
             return message_content
 
-        # If no match
         return message_content
 
     async def process_image_content(self, message: discord.Message) -> Optional[str]:
@@ -370,13 +453,13 @@ class GreggLimperBot:
                                     await f.write(await resp.read())
                                 self.logger.info(f"Downloaded image {attachment.filename}")
                             else:
-                                self.logger.warning(f"Failed to download image {attachment.filename} - HTTP {resp.status}")
+                                self.logger.error(f"Failed to download image {attachment.filename} - HTTP {resp.status}")
                                 return None
 
                     # Encode the downloaded image to base64
                     base64_image = await self.encode_image_base64(image_path)
                     if not base64_image:
-                        self.logger.warning("Failed to encode image to base64.")
+                        self.logger.error("Failed to encode image to base64.")
                         return None
 
                     # Prepare and send the request to OpenAI for image analysis
@@ -419,49 +502,274 @@ class GreggLimperBot:
         # Return None if no image attachments are found
         return None
  
-    def replace_mentions(self, message: str, guild: discord.Guild) -> str:
-        """Replace all user, role, and channel mentions in the message content with their display names, 
-        and remove mentions of the bot itself.
+# ==================== OpenAI Response Processing ====================
+
+    async def determine_content_type(self, channel_id: int, retries: int = 3) -> Optional[str]:
+        """Prompt OpenAI to return the desired content type: "message", "GIF", "YouTube", or "Website".
         
         Args:
-            message (str): The content of the message.
-            guild (discord.Guild): The guild to fetch members, roles, and channels from.
-            
+            channel_id (int): The ID of the channel to determine the content type for.
+            retries (int): The number of retries to attempt if an error occurs.
         Returns:
-            str: The content with mentions replaced by display names and the bot's mention removed.
+            str: The content type determined by OpenAI, or None if an error occurs.
         """
-        bot_id = self.bot.user.id  # Store the bot's ID for comparison
+        prompt = "Based on the chat history, reply with one word that best describes the type of response that would be most relevant and helpful: \
+        'message', 'GIF', 'YouTube', or 'Website'. Do not provide any additional text or explanations. ONLY REPLY WITH ONE OF THE FOLLOWING WORDS: \
+        message, GIF, YouTube, or Website."
+
+        conversation_history = self.process_cache_for_openai(channel_id, custom_prompt=prompt)
+        for attempt in range(retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=conversation_history,
+                    max_tokens=10,
+                    temperature=0.2,
+                )
+                content_type = response.choices[0].message.content.strip().lower()
+                
+                if content_type in ["message", "gif", "youtube", "website"]:
+                    return content_type
+                else:
+                    self.logger.warning(f"Attempt {attempt + 1}: Invalid content type response: {content_type}")
+
+            except Exception as e:
+                self.logger.error(f"Error determining content type on attempt {attempt + 1}: {str(e)}")
+
+        # If all attempts fail, return None
+        self.logger.error(f"Failed to determine content type after {retries} attempts. Defaulting to 'message'.")
+        return None
+
+    async def query_gregg_for_message(self, channel_id: int) -> Optional[str]:
+        """Fetch a normal text message response from OpenAI (unprocessed).
+        Args:
+            channel_id (int): The ID of the channel to fetch the message for.
+        Returns:
+            str: The assistant's reply as a string, or None if an error occurs.
+        """
+        conversation_history = self.process_cache_for_openai(channel_id)
+        try:
+            response = self.client.chat.completions.create(
+                model=self.fine_tuned_model,
+                messages=conversation_history,
+                max_tokens=150,
+                temperature=0.7
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            self.logger.error(f"Error querying Gregg Limper for message: {str(e)}")
+            return None
+    
+    async def request_search_query(self, channel_id: int) -> Optional[str]:
+        """Generate a search query based on the recent messages in the channel
+        Args:
+            channel_id (int): The ID of the channel to generate the search query for.
+        Returns:
+            str: The search query generated based on the recent messages, or None if an error occurs.
+        """
+
+        # Format the conversation history for OpenAI
+        prompt = "Based on the recent chat history, provide a search query that most effectively addresses or supports the latest message's content. \
+        The query can help reinforce or critique the topic, leaning toward relevant sources. Reply only with the search query. \
+        Do not provide the link, just the title of the content you would like to find. **Never** reuse the same media within the same conversation."
+        conversation_history = self.process_cache_for_openai(channel_id, custom_prompt=prompt)
+
+        # Send to OpenAI to generate a query
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4o",
+                messages=conversation_history,
+                max_tokens=20,
+                temperature=0.7
+            )
+
+            # Extract the suggested search term from the response
+            search_query = response.choices[0].message.content.strip() if response.choices else None
+            self.logger.info(f"Generated search query: {search_query}")
+            return search_query
+
+        except Exception as e:
+            self.logger.error(f"Error generating search query: {e}")
+            return None
+
+# ==================== Search Functions ====================
+
+    async def search_youtube(self, query: Optional[str] = None, url: Optional[str] = None) -> YouTubeData:
+        """Search Youtube and return the top video result.
+
+        Args:
+            query (str): The search query for Youtube.
+            url (str): The Youtube video URL.
+        Returns:
+            tuple: The title, author, description, and url of the top Youtube video result, or None if no results are found.
+        """
+        try:
+            # Search by query
+            if query:
+                request = self.youtube_client.search().list(
+                    part="snippet",
+                    maxResults=1,
+                    q=query,
+                    type="video"
+                )
+                response = request.execute()
+                if items := response.get("items"):
+                    snippet = items[0].get("snippet", {})
+                    video_id = items[0].get("id", {}).get("videoId")
+                    url = f"https://www.youtube.com/watch?v={video_id}"
+                    title = snippet.get("title")
+                    author = snippet.get("channelTitle")
+                    description = snippet.get("description")
+                    return title, author, description, url
+                else:
+                    self.logger.warning(f"No YouTube results found for query: {query}")
+                    return None
+
+            # Fetch video details by URL
+            elif url:
+                self.logger.debug(f"Fetching YouTube video details for URL: {url}")
+                video_id = re.search(r"(?:v=|/)([A-Za-z0-9_-]{11})", url)
+                if not video_id:
+                    self.logger.error(f"Invalid YouTube URL format: {url}")
+                    return None
+                video_id = video_id.group(1)
+
+                request = self.youtube_client.videos().list(part="snippet", id=video_id)
+                response = request.execute()
+                if items := response.get("items"):
+                    snippet = items[0].get("snippet", {})
+                    title = snippet.get("title")
+                    author = snippet.get("channelTitle")
+                    description = snippet.get("description")
+                    return title, author, description, url
+                else:
+                    self.logger.warning(f"No YouTube results found for URL: {url}")
+                    return None
+
+            else:
+                self.logger.error("No query or URL provided for YouTube search.")
+                return None
+
+        except Exception as e:
+            self.logger.error(f"Error searching YouTube: {str(e)}")
+            return None
+
+    async def search_gif(self, query: Optional[str] = None, url: Optional[str] = None) -> GIFData:
+        """Search Giphy and return the GIF title, description (if available), and URL.
         
-        # Replace any mentions in the response with display names for users, names for roles, or names for channels
-        def replace_mention(match):
-            mention_id = int(match.group(1) or match.group(2) or match.group(3))
+        Args:
+            query (str): The search query for Giphy.
+            url (str): The GIF URL.
 
-            # Skip the bot's mention entirely
-            if mention_id == bot_id:
-                return ""  # Return empty string to remove mention of the bot
+        Returns:
+            tuple: The title, description, and URL of the top GIF result, or None if no results are found.
+        """
+        if not (query or url):
+            self.logger.error("Must specify either query or url for search_gif")
+            return None
+        try:
+            # Handle direct URL case
+            if url and not query:
+                title, description = await self.fetch_link_data(url)
+                return title, description, url
+
+            # Limit length to prevent 414 errors
+            query = query[:100]
+            encoded_query = urllib.parse.quote(query)
+            giphy_url = f"https://api.giphy.com/v1/gifs/search?api_key={self.giphy_api_key}&q={encoded_query}&limit=1"
             
-            if match.group(1):  # User mention
-                user = guild.get_member(mention_id)
-                return user.display_name if user else "<Unknown User>"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(giphy_url) as response:
+                    if not response.status == 200:
+                        self.logger.error(f"Error searching Giphy: HTTP {response.status}")
+                        return None
+                    
+                    data = await response.json()
+                    gif_data = data.get("data", [])
 
-            elif match.group(2):  # Role mention
-                role = guild.get_role(mention_id)
-                return role.name if role else "<Unknown Role>"
+                    if not gif_data:
+                        self.logger.error(f"No Giphy results found for query: {query}")
+                        return None
+                    
+                    # Extract title, url, and tags
+                    gif_entry = gif_data[0]
+                    title = gif_entry.get("title")
+                    url = gif_entry.get("url")
+                    tags = gif_entry.get("tags", [])
+                    description = ", ".join(tags) if tags else None
 
-            elif match.group(3):  # Channel mention
-                channel = guild.get_channel(mention_id)
-                return channel.name if channel else "<Unknown Channel>"
+                    if title and url and description:
+                        return title, description, url
+                    elif title and url:
+                        return title, "No Description Available", url
+                    else:
+                        self.logger.error(f"Missing title or URL for Giphy query: {query}")
+                        return None
+                    
+        except Exception as e:
+            self.logger.error(f"Error searching Giphy: {str(e)}")
+            return None
 
-        # This regex matches user mentions (<@userID> or <@!userID>), role mentions (<@&roleID>), and channel mentions (<#channelID>)
-        msg_content = re.sub(r"<@!?(\d+)>|<@&(\d+)>|<#(\d+)>", replace_mention, message)
+    async def search_google(self, query: str, num_results=1) -> Optional[Tuple[str, str, str]]:
+        """Search Google and return the top search result.
 
-        return msg_content
+        Args:
+            query (str): The search query for Google.
+            num_results (int): The number of search results to return (default 1).
+        Returns:
+            list[dict]: The top search results from Google (up to num_results), or empty list if no results are found.
+        """
+        # Perform a Google search and return the top search result
+        try:
+            response = self.google_client.cse().list(q=query, cx=self.search_engine_id, num=num_results).execute()
+            items = response.get("items", [])
+            if items:
+                title = items[0].get("title")
+                snippet = items[0].get("snippet")
+                link = items[0].get("link")
+                return title, snippet, link
+            else:
+                self.logger.warning(f"No Google results found for query: {query}")
+                return []
+        except Exception as e:
+            self.logger.error(f"Error searching Google: {str(e)}")
+            return []
 
-    def process_message_for_openai(self, channel_id: int) -> ConversationHistory:
-        """Process the recent messages from the channel for OpenAI, combining consecutive messages by role.
+    async def fetch_link_data(self, url: str) -> Tuple[Optional[str], Optional[str]]:
+        """Fetch the title of a webpage using BeautifulSoup.
+        
+        Args:
+            url (str): The URL of the webpage.
+        Returns:
+            tuple: The title and description of the webpage, or None if an error occurs.
+        """
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        content = await response.text()
+                        soup = BeautifulSoup(content, "html.parser")
+
+                        # Attempt to get the title and description
+                        title = soup.title.string
+                        description_meta = soup.find("meta", attrs={"name": "description"})
+                        description = description_meta["content"] if description_meta else "No description available"
+                        return title, description
+                    else:
+                        self.logger.warning(f"Error fetching link data: {response.status}")
+                        return None
+        except Exception as e:
+            self.logger.error(f"Error fetching link data: {str(e)}")
+            return None
+
+# ==================== Utility Functions ====================
+
+    def process_cache_for_openai(self, channel_id: int, custom_prompt: Optional[str]=None) -> ConversationHistory:
+        """Process the recent messages in the specified channel's cache deque for OpenAI input.
 
         Args:
             channel_id (int): The ID of the channel to process.
+            prompt (str): An optional system prompt to include at the start of the conversation history. Defaults to self.system_prompt).
         Returns:
             list: The conversation history for the channel. Format: [{"role": str, "content": str}] (oldest messages first). If a system prompt is included, it should be the first message.
         """
@@ -495,462 +803,14 @@ class GreggLimperBot:
         if current_content:
             conversation_history.append({"role": current_role, "content": current_content.strip()})
 
-        self.logger.debug(f"Conversation history: {conversation_history}")
-
         # Insert the system prompt at the start of the conversation history
-        conversation_history.insert(0, {"role": "system", "content": self.system_prompt})
+        if custom_prompt:
+            conversation_history.insert(0, {"role": "system", "content": custom_prompt})
+        else:
+            conversation_history.insert(0, {"role": "system", "content": self.system_prompt})
 
 
         return conversation_history
-
-# ==================== OpenAI Response Processing ====================
-
-    async def query_gregg(self, conversation_history: ConversationHistory) -> Optional[OpenAIResponse]:
-        """Send the conversation history to Gregg Limper (our OpenAI model) for a response.
-        
-        Args:
-            conversation_history (list): The conversation history for the channel. Format: [{"role": str, "content": str}] (oldest messages first). If a system prompt is included, it should be the first message.
-        Returns:
-            OpenAIResponse: The response object from OpenAI.
-        """
-        try:
-            response = self.client.chat.completions.create(
-                model=self.fine_tuned_model,
-                messages=conversation_history,
-                max_tokens=450,
-                temperature=0.85,
-                functions=[
-                    {
-                        "name": "search_youtube_video",
-                        "description": "Retrieve a relevant YouTube video based on a user's query.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "search_term": {
-                                    "type": "string",
-                                    "description": "Query to search for on YouTube"
-                                }
-                            },
-                            "required": ["search_term"]
-                        }
-                    },
-                    {
-                        "name": "search_gif",
-                        "description": "Retrieve a relevant GIF based on a user's query.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "search_term": {
-                                    "type": "string",
-                                    "description": "Query to search_gif"
-                                }
-                            },
-                            "required": ["search_term"]
-                        }
-                    }
-                ]
-            )
-            return response
-        except Exception as e:
-            self.logger.error(f"Error querying Gregg Limper: {str(e)}")
-            return None
-
-    async def process_openai_response(self, response: Dict) -> GreggAction:
-        """Process the response from OpenAI (our assistant's response), handling potential function calls
-
-        Args:
-            response (dict): The response object from OpenAI.
-        Returns:
-            dict: The assistant's reply in a dictionary with the following format:
-            {
-                "message": "The assistant's reply",
-                "YouTube": {"title": "Video Title", "author": "Video Author", "description": "Video Description", "url": "Video URL"},
-                "GIF": {"title": "GIF Title", "description": "GIF Description", "url": "GIF URL"}    
-            }
-        """
-        # Check if OpenAI responded with a function call (e.g., YouTube search, GIF search)
-        if response.choices[0].finish_reason == "function_call":
-            action = response.choices[0].message.function_call
-            if action:
-                if action.name == "search_youtube_video":
-                    arguments = json.loads(action.arguments)
-                    search_term = arguments["search_term"]
-                    self.logger.info(f"Executing YouTube search for '{search_term}'")
-                    title, author, description, url = await self.search_youtube(query=search_term)
-                    return {
-                        "message": None,
-                        "YouTube": {"title": title, "author": author, "description": description, "url": url},
-                        "GIF": None
-                    }
-                elif action.name == "search_gif":
-                    arguments = json.loads(action.arguments)
-                    search_term = arguments["search_term"]
-                    self.logger.info(f"Executing GIF search for '{search_term}'")
-                    title, description, url = await self.search_gif(query=search_term)
-                    return {
-                        "message": None,
-                        "YouTube": None,
-                        "GIF": {"title": title, "description": description, "url": url}
-                    }
-        
-        # Otherwise, process the normal assistant reply
-        assistant_reply = response.choices[0].message.content.strip()
-        return {
-            "message": assistant_reply,
-            "YouTube": None,
-            "GIF": None
-        }
-
-    async def process_gregg_action(self, target_message: discord.Message, action: GreggAction) -> str:
-        """Process the response from OpenAI and send the appropriate message to Discord. Saves the action to the channel's deque cache.
-
-        Args:
-            target_message (discord.Message): The message object to reply to.
-            action (dict): The action object from OpenAI.
-        Returns:
-            str: The message content to send to Discord.
-        """
-
-        channel_id = target_message.channel.id
-        # Prepare variables for message to send and to cache
-        message_to_send = ""
-        message_to_cache = ""
-
-        # Process general message
-        if action["message"]:
-            # Replace mentions in the message content and process hallucinated links
-            message_to_send = self.replace_mentions(action["message"], target_message.guild)
-            message_to_send, message_to_cache = await self.process_hallucinated_link_reply(message_to_send, target_message.channel.id)
-
-        # Process YouTube action
-        elif action.get("YouTube"):
-            title, author, description, url = action["YouTube"].values()
-            if title and url:
-                message_to_send = f"[{title}](<{url}>)"
-                message_to_cache = f"[{title} ~|~ {author or 'Unknown Author'} ~|~ {description or 'No description available'}](YT_Video)"
-            else:
-                message_to_send = "YouTube search returned no results."
-                message_to_cache = "[Error fetching Youtube data](YT_Video)"
-
-        # Process GIF action
-        elif action.get("GIF"):
-            title, description, url = action["GIF"].values()
-            if url:
-                message_to_send = url
-                message_to_cache = f"[{title} ~|~ {description or 'No description available'}](GIF)"
-            else:
-                message_to_send = "GIF search returned no results."
-                message_to_cache = "[GIF Link Unavailable](GIF)"
-
-        # Cache the processed message and return the message to send
-        message_entry = {
-            "displayname": "Gregg Limper",
-            "role": "assistant",
-            "content": message_to_cache,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
-        self.recent_message_cache[channel_id].appendleft(message_entry)
-
-        return message_to_send
-  
-    async def process_hallucinated_link_reply(self, message: str, channel_id: int) -> Tuple[Optional[str], Optional[str]]:
-        """Replace hallucinated links in the message content with real data from searches.
-        Uses regex to detect if the bot is using the [...](Marker) format or sending raw links.
-        Args:
-            message (str): The message content to process.
-            channel_id (int): The ID of the channel the message is from.
-        Returns:
-            tuple[str, str]: The message content with hallucinated links replaced with real data [message_to_send, message_to_cache]
-        """
-        message_to_send = message
-        message_to_cache = message
-
-        # Log hallucinated message
-        self.logger.debug(f"Hallucinated message: {message}")
-
-        # Process hallucinated links with markers ([...](Marker))
-        youtube_match = re.search(r"\[.*\]\(YT_Video\)", message)
-        gif_match = re.search(r"\[.*\]\(GIF\)", message)
-        link_match = re.search(r"\[.*\]\(LINK\)", message)
-
-        if youtube_match:
-            # Replace the hallucinated YouTube link with real data
-            self.logger.info("Processing hallucinated YouTube link")
-            content_parts = youtube_match.group(0).split("~|~")
-            query = " ".join(part.strip("[]") for part in content_parts[:2])  # Extract title and author if available
-            message_to_send, message_to_cache = await self._process_youtube_link(query=query)
-
-        elif gif_match:
-            # Replace the hallucinated GIF link with real data
-            self.logger.info("Processing hallucinated GIF link")
-            query = gif_match.group(0).split("~|~")[0][1:].strip()  # Extract title as query
-            message_to_send, message_to_cache = await self._process_gif_link(query=query)
-
-        elif link_match:
-            # Replace the hallucinated generic link with real data
-            self.logger.info("Processing hallucinated generic link")
-            query = link_match.group(0).split("~|~")[0][1:].strip()  # Extract title as query
-            message_to_send, message_to_cache = await self._process_generic_link(query=query)
-
-        else:
-            # Process raw links without markers
-            self.logger.info("Processing raw link without markers")
-
-            # Find all raw URLs in the message (https:// or http://)
-            raw_url_pattern = re.compile(r"https?://[^\s]+")
-            for raw_url_match in raw_url_pattern.finditer(message):
-                raw_url = raw_url_match.group(0)
-
-                # Generate a relevant search query based on the recent messages in the channel
-                query = await self.request_search_query(channel_id)
-                self.logger.debug(f"Generated query for raw link {raw_url}: {query}")
-
-                # Process the link based on the domain
-                if "youtube.com" in raw_url or "youtu.be" in raw_url:
-                    youtube_send, youtube_cache = await self._process_youtube_link(query=query)
-                    # Replace raw URL in both send and cache messages
-                    message_to_send = message_to_send.replace(raw_url, youtube_send)
-                    message_to_cache = message_to_cache.replace(raw_url, youtube_cache)
-                    self.logger.debug(f"Processed YouTube link: {youtube_send}")
-
-                elif "giphy.com" in raw_url or "tenor.com" in raw_url:
-                    gif_send, gif_cache = await self._process_gif_link(query=query)
-                    message_to_send = message_to_send.replace(raw_url, gif_send)
-                    message_to_cache = message_to_cache.replace(raw_url, gif_cache)
-                    self.logger.debug(f"Processed GIF link: {gif_send}")
-
-                else:
-                    generic_send, generic_cache = await self._process_generic_link(query=query)
-                    message_to_send = message_to_send.replace(raw_url, generic_send)
-                    message_to_cache = message_to_cache.replace(raw_url, generic_cache)
-                    self.logger.debug(f"Processed generic link: {generic_send}")
-
-            # Final debug logs for message content
-            self.logger.debug(f"Final message to send: {message_to_send}")
-            self.logger.debug(f"Final message to cache: {message_to_cache}")
-
-        return message_to_send, message_to_cache
-
-# ==================== Search Functions ====================
-
-    async def fetch_link_data(self, url: str) -> Tuple[Optional[str], Optional[str]]:
-        """Fetch the title of a webpage using BeautifulSoup.
-        
-        Args:
-            url (str): The URL of the webpage.
-        Returns:
-            tuple: The title and description of the webpage, or None if an error occurs.
-        """
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        content = await response.text()
-                        soup = BeautifulSoup(content, "html.parser")
-
-                        # Attempt to get the title and description
-                        title = soup.title.string
-                        description_meta = soup.find("meta", attrs={"name": "description"})
-                        description = description_meta["content"] if description_meta else "No description available"
-                        return title, description
-                    else:
-                        self.logger.warning(f"Error fetching link data: {response.status}")
-                        return None, None
-        except Exception as e:
-            self.logger.error(f"Error fetching link data: {str(e)}")
-            return None, None
-
-    async def search_google(self, query: str, num_results=1) -> List[Dict[str, str]]:
-        """Search Google and return the top search result.
-
-        Args:
-            query (str): The search query for Google.
-        Returns:
-            list[dict]: The top search results from Google (up to num_results), or empty list if no results are found.
-        """
-        # Perform a Google search and return the top search result
-        try:
-            response = self.google_client.cse().list(q=query, cx=self.search_engine_id, num=num_results).execute()
-            results = [{"title": item.get('title'), "link": item.get('link'), "snippet": item.get('snippet', 'No description available')} for item in response.get("items", [])]
-            if results:
-                return results
-            else:
-                self.logger.warning(f"No Google results found for query: {query}")
-                return []
-        except Exception as e:
-            self.logger.error(f"Error searching Google: {str(e)}")
-            return []
-
-    async def search_gif(self, query: Optional[str] = None, url: Optional[str] = None) -> GIFData:
-        """Search Giphy and return the GIF title, description (if available), and URL.
-        
-        Args:
-            query (str): The search query for Giphy.
-            url (str): The GIF URL.
-
-        Returns:
-            tuple: The title, description, and URL of the top GIF result, or None if no results are found.
-        """
-        if not (query or url):
-            self.logger.warning("Must specify either query or url for search_gif")
-            return None, None, None
-        try:
-            # Search Giphy with query if provided
-            if query:
-                # Limit length to prevent 414 errors
-                query = query[:100]
-                encoded_query = urllib.parse.quote(query)
-                giphy_url = f"https://api.giphy.com/v1/gifs/search?api_key={self.giphy_api_key}&q={encoded_query}&limit=1"
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(giphy_url) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            gif_data = data.get("data", [])
-                            if gif_data:
-                                title = gif_data[0].get("title", "No title")
-                                url = gif_data[0].get("url", None)
-                                tags = gif_data[0].get("tags", [])
-                                description = ", ".join(tags) if tags else "No tags available"
-                                return title, description, url
-                            else:
-                                self.logger.warning(f"No Giphy results found for query: {query}")
-                                return None, None, None
-                        else:
-                            self.logger.error(f"Error searching Giphy: HTTP {response.status}")
-                            return None, None, None
-
-            # Handle direct URL case if provided
-            elif url:
-                title, description = await self.fetch_link_data(url)
-                return title, description, url
-
-        except Exception as e:
-            self.logger.error(f"Error searching Giphy: {str(e)}")
-            return None, None, None
-
-    async def search_youtube(self, query: Optional[str] = None, url: Optional[str] = None) -> YouTubeData:
-        """Search Youtube and return the top video result.
-
-        Args:
-            query (str): The search query for Youtube.
-            url (str): The Youtube video URL.
-        Returns:
-            tuple: The title, author, description, and url of the top Youtube video result, or None if no results are found.
-        """
-        try:
-            # Search by query
-            if query:
-                request = self.youtube_client.search().list(
-                    part="snippet",
-                    maxResults=1,
-                    q=query,
-                    type="video"
-                )
-                response = request.execute()
-                if items := response.get("items"):
-                    snippet = items[0].get("snippet", {})
-                    video_id = items[0].get("id", {}).get("videoId")
-                    url = f"https://www.youtube.com/watch?v={video_id}"
-                    title = snippet.get("title")
-                    author = snippet.get("channelTitle")
-                    # Summarize the description with Gregg for a more concise response
-                    description = await self.summarize_description(snippet.get("description"))
-                    return title, author, description, url
-                else:
-                    self.logger.warning(f"No YouTube results found for query: {query}")
-                    return None, None, None, None
-
-            # Fetch video details by URL
-            elif url:
-                video_id = re.search(r"(?:v=|/)([A-Za-z0-9_-]{11})", url)
-                if not video_id:
-                    self.logger.warning("Invalid YouTube URL format.")
-                    return None, None, None, None
-                video_id = video_id.group(1)
-
-                request = self.youtube_client.videos().list(part="snippet", id=video_id)
-                response = request.execute()
-                if items := response.get("items"):
-                    snippet = items[0].get("snippet", {})
-                    title = snippet.get("title")
-                    author = snippet.get("channelTitle")
-                    # Summarize the description with Gregg for a more concise response
-                    description = await self.summarize_description(snippet.get("description"))
-                    return title, author, description, url
-                else:
-                    self.logger.warning(f"No YouTube results found for URL: {url}")
-                    return None, None, None, None
-
-            else:
-                self.logger.warning("No query or URL provided for YouTube search.")
-                return None, None, None, None
-
-        except Exception as e:
-            self.logger.error(f"Error searching YouTube: {str(e)}")
-            return None, None, None, None
-
-    async def request_search_query(self, channel_id: int) -> str:
-        """Generate a search query based on the recent messages in the channel"""
-
-        # Get the recent messages in reverse order to maintain chronological order
-        recent_messages = list(self.recent_message_cache[channel_id])[:self.assistant_context_length]
-        recent_messages.reverse()
-
-        # Format the conversation history for OpenAI
-        conversation_history = self.process_message_for_openai(channel_id)
-
-        # Send to OpenAI to generate a query
-        try:
-            response = self.client.chat.completions.create(
-                model=self.fine_tuned_model,
-                messages=conversation_history,
-                max_tokens=20,
-                temperature=0.6
-            )
-
-            # Extract the suggested search term from the response
-            search_query = response.choices[0].message.content.strip() if response.choices else "default search query"
-            self.logger.debug(f"Generated search query: {search_query}")
-            return search_query
-
-        except Exception as e:
-            self.logger.error(f"Error generating search query: {e}")
-            return "default search query"
-
-    async def summarize_description(self, description: str) -> str:
-        """Generate a succinct summary of a long YouTube/other description using OpenAI.
-
-        Args:
-            description (str): The full description of a YouTube video.
-
-        Returns:
-            str: A succinct summary of the description.
-        """
-        try:
-            # Construct a prompt for generating a succinct summary
-            prompt = (
-                "Create a concise, one- to two-sentence summary for the following YouTube video description:\n\n"
-                f"{description}\n\n"
-                "Summary:"
-            )
-
-            # Send the prompt to the OpenAI API for summarization
-            response = self.client.chat.completions.create(
-                model=self.fine_tuned_model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=50,
-                temperature=0.7
-            )
-
-            # Extract and return the summary if it exists
-            summary = response.choices[0].message.content.strip() if response.choices else "No summary available"
-            return summary
-
-        except Exception as e:
-            self.logger.error(f"Error summarizing description: {str(e)}")
-            return "No summary available" 
-
-# ==================== Utility Functions ====================
 
     def clear_cache(self, channel_id: int) -> bool:
         """Clear the recent message cache for the specified channel.
@@ -1001,6 +861,41 @@ class GreggLimperBot:
         
         return cache_contents
 
+    async def summarize_description(self, description: str) -> str:
+        """Generate a succinct summary of the given description using GreggLimper OpenAI.
+
+        Args:
+            description (str): The full description of a YouTube video.
+
+        Returns:
+            str: A succinct summary of the description.
+        """
+        try:
+            # Construct a prompt for generating a succinct summary
+            prompt = (
+                "Create a concise, one- to two-sentence summary for the following description:\n\n"
+                f"{description}\n\n"
+                "Summary:"
+            )
+            # Send the prompt to the OpenAI API for summarization
+            response = self.client.chat.completions.create(
+                model=self.fine_tuned_model,
+                messages=[
+                    {"role": "system", "content": "You are a summarization asssistant."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=50,
+                temperature=0.7
+            )
+
+            # Extract and return the summary if it exists
+            summary = response.choices[0].message.content.strip() if response.choices else "No summary available"
+            return summary
+
+        except Exception as e:
+            self.logger.error(f"Error summarizing description: {str(e)}")
+            return "No summary available" 
+
     async def encode_image_base64(self, image_path: str) -> str:
         """Encode an image at the specified path to base64.
         
@@ -1012,46 +907,148 @@ class GreggLimperBot:
         async with aiofiles.open(image_path, "rb") as image_file:
             return base64.b64encode(await image_file.read()).decode('utf-8')
         
-    async def _process_youtube_link(self, query: str) -> Tuple[str, str]:
+    async def _process_youtube_link(self, query: Optional[str] = None, url: Optional[str] = None) -> Optional[Tuple[str, str]]:
         """Search YouTube for the given query and format the response for the Discord message and cache entry.
 
         Args:
             query (str): The search query for YouTube.
+            url (str): The YouTube video URL.
         Returns:
             tuple: The formatted YouTube link and cache entry (message_to_send, message_to_cache).
         """
-        title, author, description, url = await self.search_youtube(query=query)
         
-        if title and author and url:
-            # Clean up title, author, and description to remove newlines and extra spaces
-            title = title.replace("\n", " ").strip()
-            author = author.replace("\n", " ").strip()
-            description_display = (description or "No description available").replace("\n", " ").strip()
+        if not (query or url):
+            logging.error("Must specify either query or url for _process_youtube_link")
+            return None
+        
+        # Process the url
+        if url:
+            result = await self.search_youtube(url=url)
+            if result:
+                title, author, description, url = result
+            else:
+                return None
+            
+            description = await self.summarize_description(description) if description else None
 
+            if title and author and description and url:
+                # Format for message and cache
+                message_to_send = f"[{title}]({url})"
+                message_to_cache = f"[YouTube ::: {title} ::: {author} ::: {description}]"
+                
+                return message_to_send, message_to_cache
+
+            elif title and author and url:
+                # Format for message and cache
+                message_to_send = f"[{title}]({url})"
+                message_to_cache = f"[YouTube ::: {title} ::: {author} ::: No description available]"
+                
+                return message_to_send, message_to_cache
+            
+            elif title and url:
+                # Format for message and cache
+                message_to_send = f"[{title}]({url})"
+                message_to_cache = f"[YouTube ::: {title} ::: Unknown Author ::: No description available]"
+                
+                return message_to_send, message_to_cache
+            
+            else:
+                logging.log_error("YouTube search returned no results.")
+                return None
+
+        # Process the query
+        title, author, description, url = await self.search_youtube(query=query)
+        description = await self.summarize_description(description) if description else None
+
+        if title and author and description and url:
             # Format for message and cache
-            message_to_send = f"[{title}](<{url}>)"
-            message_to_cache = f"[{title} ~|~ {author} ~|~ {description_display}](YT_Video)"
+            message_to_send = f"[{title}]({url})"
+            message_to_cache = f"[YouTube ::: {title} ::: {author} ::: {description}]"
             
             return message_to_send, message_to_cache
+        
+        elif title and author and url:
+            # Format for message and cache
+            message_to_send = f"[{title}]({url})"
+            message_to_cache = f"[YouTube ::: {title} ::: {author} ::: No description available]"
+            
+            return message_to_send, message_to_cache
+        
+        elif title and url:
+            # Format for message and cache
+            message_to_send = f"[{title}]({url})"
+            message_to_cache = f"[YouTube ::: {title} ::: Unknown Author ::: No description available]"
+            
+            return message_to_send, message_to_cache
+        
         else:
-            return "YouTube search returned no results.", "[Error fetching YouTube data](YT_Video)"
+            logging.log_error("YouTube search returned no results.")
+            return None
 
-    async def _process_gif_link(self, query: str) -> Tuple[str, str]:
+    async def _process_gif_link(self, query: Optional[str] = None, url: Optional[str] = None) -> Optional[Tuple[str, str]]:
         """Search GIf for the given query and format the response for the discord message and cache entry.
         
         Args:
             query (str): The search query for GIF.
+            url (str): The GIF URL.
         Returns:
             tuple: The formatted YouTube link and cache entry (message_to_send, message_to_cache).
         """
-        title, description, url = await self.search_gif(query=query)
+        if not (query or url):
+            logging.error("Must specify either query or url for _process_gif_link")
+            return None
+        
+        # Process the url
         if url:
-            description_display = description if description else "No description available"
-            return url, f"[{title} ~|~ {description_display}](GIF)"
-        else:
-            return "GIF search returned no results.", "[GIF Link Unavailable](GIF)"
+            result = await self.search_gif(url=url)
+            if result:
+                title, description, url = result
+            else:
+                return None
+            
+            description = await self.summarize_description(description) if description else None
 
-    async def _process_generic_link(self, query: str, num_results=1) -> Tuple[str, str]:
+            if title and description and url:
+                # Format for message and cache
+                message_to_send = url
+                message_to_cache = f"[GIF ::: {title} ::: {description}]"
+
+                return message_to_send, message_to_cache
+            
+            elif title and url:
+                # Format for message and cache
+                message_to_send = url
+                message_to_cache = f"[GIF ::: {title} ::: No description available]"
+
+                return message_to_send, message_to_cache
+            
+            else:
+                logging.log_error("GIF search returned no results.")
+                return None
+
+        # Process the query
+        title, description, url = await self.search_gif(query=query)
+        description = await self.summarize_description(description) if description else None
+
+        if title and description and url:
+            # Format for message and cache
+            message_to_send = url
+            message_to_cache = f"[GIF ::: {title} ::: {description}]"
+
+            return message_to_send, message_to_cache
+        
+        elif title and url:
+            # Format for message and cache
+            message_to_send = url
+            message_to_cache = f"[GIF ::: {title} ::: No description available]"
+
+            return message_to_send, message_to_cache
+        
+        else:
+            logging.log_error("GIF search returned no results.")
+            return None
+   
+    async def _process_generic_link(self, query: Optional[str] = None, url: Optional[str] = None, num_results=1) -> Optional[Tuple[str, str]]:
         """Search Google for the given query and format the response for the discord message and cache entry.
         
         Args:
@@ -1059,9 +1056,56 @@ class GreggLimperBot:
         Returns:
             tuple: The formatted YouTube link and cache entry (message_to_send, message_to_cache).
         """
+        if not (query or url):
+            logging.error("Must specify either query or url for _process_generic_link")
+            return None
+        # Process the url
+        if url:
+            result = await self.fetch_link_data(url)
+            if result:
+                title, description = result
+            else:
+                return None
+            
+            description = await self.summarize_description(description) if description else None
+
+            if title and description:
+                # Format for message and cache
+                message_to_send = f"[{title}]({url})"
+                message_to_cache = f"[Website ::: {title} ::: {description}]"
+
+                return message_to_send, message_to_cache
+            
+            elif title:
+                # Format for message and cache
+                message_to_send = f"[{title}]({url})"
+                message_to_cache = f"[Website ::: {title} ::: No description available]"
+
+                return message_to_send, message_to_cache
+            
+            else:
+                logging.log_error("Website search returned no results.")
+                return None
+        
+        # Process the query
         results = await self.search_google(query, num_results=num_results)
         for result in results:
-            if result["title"] and result["link"]:
-                description_display = result["snippet"] if result["snippet"] else "No description available"
-                return f"[{result['title']}](<{result['link']}>)", f"[{result['title']} ~|~ {description_display}](LINK)"
-        return "Google search returned no results.", "[Link Unavailable](LINK)"
+            title, snippet, url = result
+            description = await self.summarize_description(snippet) if snippet else None
+            if title and description and url:
+                # Format for message and cache
+                message_to_send = f"[{title}]({url})"
+                message_to_cache = f"[Website ::: {title} ::: {description}]"
+
+                return message_to_send, message_to_cache
+            
+            elif title and url:
+                # Format for message and cache
+                message_to_send = f"[{title}]({url})"
+                message_to_cache = f"[Website ::: {title} ::: No description available]"
+
+                return message_to_send, message_to_cache
+
+            else:
+                logging.log_error("Website search returned no results.")
+                return None

@@ -467,7 +467,7 @@ class GreggLimperBot:
                         return None
 
                     # Prepare and send the request to OpenAI for image analysis
-                    response = await self.client.chat.completions.create(
+                    response = self.client.chat.completions.create(
                         model=self.image_detection_model,
                         messages=[
                             { "role" : "system", "content" : system_prompt },
@@ -870,14 +870,15 @@ class GreggLimperBot:
             system_prompt = (
                 f"You are Gregg Limper\n\n"
                 f"{self.gregg_limper_attributes}\n\n"
-                "Your purpose is to provide a concise summary of text descriptions."
-                "Respond in a way that reflects Gregg Limper's personality and style."
-                "**Do not include mentions to the GIF servicer (i.e. Tenor or Giphy)**"
+                "Your purpose is to provide a concise summary of text descriptions.\n\n"
+                "Respond in a way that reflects Gregg Limper's personality and style.\n\n"
+                "**Do not include mentions to Tenor or Giphy.**"
             )
 
             user_prompt = (
                 f"Create a concise one-to-two-sentence summary for the following description:\n\n"
                 f"{description}\n\n"
+                "Ignore references to Tenor or Giphy.\n\n"
                 "Summary:"
             )
             # Send the prompt to the OpenAI API for summarization

@@ -497,6 +497,7 @@ class GreggLimperBot:
  
 # ==================== OpenAI Response Processing ====================
 
+    # TODO: see if we should keep gregg limper attributes in the prompt.
     async def determine_content_type(self, channel_id: int, max_retries: int = 3) -> Optional[str]:
         """Determine appropriate content type for response based on chat history.
         Args:
@@ -506,10 +507,13 @@ class GreggLimperBot:
             Optional[str]: 'message', 'GIF', 'YouTube', or 'Website' or None if determination fails.
         """
 
-        prompt = "Based on the chat history, reply with one word that best describes the type of response that would be most relevant and helpful: \
-        'message', 'GIF', 'YouTube', or 'Website'. Do not provide any additional text or explanations. **ONLY REPLY WITH ONE OF THE FOLLOWING WORDS:** \
-        message, GIF, YouTube, or Website."
-
+        prompt = (
+            "You are Gregg Limper.\n\n"
+            f"{self.gregg_limper_attributes}\n\n"
+            "Based on the chat history, reply with one word that best describes the type of response that would be most relevant and helpful: "
+            "'message', 'GIF', 'YouTube', or 'Website'. Do not provide any additional text or explanations. **ONLY REPLY WITH ONE OF THE FOLLOWING WORDS:**: "
+            "message, GIF, YouTube, or Website."
+        )
         conversation_history = self.process_cache_for_openai(channel_id, custom_prompt=prompt)
         for attempt in range(max_retries):
             try:
@@ -868,10 +872,11 @@ class GreggLimperBot:
                 f"{self.gregg_limper_attributes}\n\n"
                 "Your purpose is to provide a concise summary of text descriptions."
                 "Respond in a way that reflects Gregg Limper's personality and style."
+                "**Do not include mentions to the GIF servicer (i.e. Tenor or Giphy)**"
             )
 
             user_prompt = (
-                f"Create a concise, one- to two-sentence summary for the following description:\n\n"
+                f"Create a concise one-to-two-sentence summary for the following description:\n\n"
                 f"{description}\n\n"
                 "Summary:"
             )

@@ -307,55 +307,55 @@ class OpenAIClient:
             logger.error(f"Error determining follow-up requirement: {e}")
             return False
 
+    async def select_most_relevant_yt(self, query: str, media_descriptions: List[str], OAI_messages: List[Dict]) -> int:
+        """Given a search query and a list of youtube descriptions, select the index of the most relevant media description based on the recent conversation.
+        Args:
+            query (str): The search query used to find the media.
+            media_descriptions (List[str]): The list of media descriptions to choose from.
+            OAI_messages (List[Dict]): The list of messages to provide to OpenAI
+        Returns:
+            int: The index of the most relevant media description, or 0 if an error occurs.
+        """
+        prefix_prompt = (
+            "Your purpose is to select the most relevant media from a list of descriptions.\n"
+            "Use the provided search query and the context of the given conversation to determine the most relevant media.\n"
+            "Reply only with the number corresponding to the index of the selected media description.\n"
+            "Do not include any additional text in your response."
+        )
 
-    # async def select_most_relevant_media(self, query: str, media_descriptions: List[str], OAI_messages: List[Dict]) -> int:
-    #     """Given a search query and a list of media descriptions, select the index of the most relevant media description based on the recent conversation.
-    #     Args:
-    #         query (str): The search query used to find the media.
-    #         media_descriptions (List[str]): The list of media descriptions to choose from.
-    #         OAI_messages (List[Dict]): The list of messages to provide to OpenAI
-    #     Returns:
-    #         int: The index of the most relevant media description, or 0 if an error occurs.
-    #     """
-    #     prefix_prompt = (
-    #         "Your purpose is to select the most relevant media from a list of descriptions.\n"
-    #         "Use the provided search query and the context of the conversation to determine the most relevant media.\n"
-    #         "Reply only with the number corresponding to the index of the selected media description.\n"
-    #         "Do not include any additional text in your response."
-    #     )
+        affix_prompt = (
+            "Now select the most relevant media from the list of descriptions.\n"
+            "Reply only with the number corresponding to the index of the selected media description.\n"
+            f"The query is: {query}\n"
+            f"The descriptions are:"
+        )
+        for i, description in enumerate(media_descriptions):
+            affix_prompt += f"\n{i+1}. {description}"
 
-    #     affix_prompt = (
-    #         "Now select the most relevant media from the list of descriptions.\n"
-    #         f"The query is: {query}\n"
-    #         f"The descriptions are:"
-    #     )
-    #     for i, description in enumerate(media_descriptions):
-    #         affix_prompt += f"\n{i+1}. {description}"
+        messages = [
+            {"role": "system", "content": prefix_prompt},
+            *OAI_messages,
+            {"role": "user", "content": affix_prompt},
+        ]
 
-    #     messages = [
-    #         {"role": "system", "content": prefix_prompt},
-    #         *OAI_messages,
-    #         {"role": "user", "content": affix_prompt},
-    #     ]
+        # Send to OpenAI for a response
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.chain_of_thought_model_id,
+                messages=messages,
+                max_tokens=10,
+                temperature=self.chain_of_thought_temp
+            )
+            content = response.choices[0].message.content.strip()
 
-    #     # Send to OpenAI for a response
-    #     try:
-    #         response = await self.client.chat.completions.create(
-    #             model=self.chain_of_thought_model_id,
-    #             messages=messages,
-    #             max_tokens=10,
-    #             temperature=self.chain_of_thought_temp
-    #         )
-    #         content = response.choices[0].message.content.strip()
+            # Validate and convert to index
+            if content.isdigit():
+                index = int(content)
+                if 1 <= index <= len(media_descriptions):  # Ensure it's within the valid range
+                    return index - 1
+            logger.error(f"Invalid response content: {content}")
+        except Exception as e:
+            logger.error(f"Error selecting most relevant media: {e}")
 
-    #         # Validate and convert to index
-    #         if content.isdigit():
-    #             index = int(content)
-    #             if 1 <= index <= len(media_descriptions):  # Ensure it's within the valid range
-    #                 return index - 1
-    #         logger.error(f"Invalid response content: {content}")
-    #     except Exception as e:
-    #         logger.error(f"Error selecting most relevant media: {e}")
-
-    #     # Default fallback
-    #     return 0
+        # Default fallback
+        return 0

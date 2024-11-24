@@ -14,9 +14,8 @@ ON_PRESENCE_UPDATE = "on_presence_update"           # Called when a user's prese
 
 # Incoming message pipeline
 ON_MESSAGE = "on_message"                           # Called when received message from Discord
-AWAITING_RESPONSE = "awaiting_response"             # Called when msg is processed and we are awaiting a response (inits CoT pipeline)
-RESPONSE_COMPLETE = "response_complete"             # Called when response is ready to be sent to user (string)
-ON_RESPONSE_SENT = "on_response_completed"     # Assistant response is ready: response
+AWAITING_RESPONSE = "awaiting_response"             # Called when incoming msg is processed and we are awaiting a response from the bot (inits CoT pipeline)
+ON_RESPONSE_SENT = "on_response_completed"          # The bot finished a response stream and sent message(s) to the user
 
 
 # Global Dispatcher for signals

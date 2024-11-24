@@ -36,6 +36,8 @@ class YouTubeProcessor:
             self.youtube_client = build("youtube", "v3", developerKey=GOOGLE_API_KEY)
             self.initialized = True    # Mark this instance as initialized
 
+    # ------------------ YOUTUBE URL PROCESSING ------------------
+
     async def search_by_url(self, url: str) -> str:
         """Process a YouTube URL and format the response.
         Args:
@@ -99,6 +101,79 @@ class YouTubeProcessor:
             logger.error(f"Error fetching YouTube video details: {str(e)}")
             return None        
         
+    # ------------------ YOUTUBE KEYWORD SEARCH ------------------
+
+    async def search_by_keyword(self, keyword: str, oai_messages: List[dict]) -> Tuple[str, str]:
+        """Process a YouTube keyword search and select the most relevant video based on the given OpenAI messages.
+        Args:
+            keyword (str): The keyword to search for.
+            oai_messages (List[dict]): The user's GLThread converted to OpenAI messages.
+        Returns:
+            Tuple[str, str]: A tuple containing the message to send and cache.
+        """
+
+        # 1. Search YouTube for the keyword
+        logger.info(f"Searching YouTube for '{keyword}'...")
+        videos = await self._search_youtube(keyword)
+        if not videos:
+            logger.error("Failed to search YouTube.")
+            return None
+        
+        # 2. Process each video's thumbnail and summarize the descriptions
+        for video in videos:
+            # Process each video's thumbnail
+            thumbnail_url = video.get("thumbnail_url")
+            video["thumbnail_description"] = await self.img_processor.describe_image(thumbnail_url) if thumbnail_url else "No Thumbnail Description Available"
+            
+            # Summarize the YT descriptions
+            description = video.get("description")
+            description = await self.openai_client.text_summarizer(description) if description else "No Description Available"
+
+        logger.info(f"Found {len(videos)} videos.")
+
+        # 3. Process and select the most relevant video based on the OpenAI messages
+        concat_descriptions = [f"{video.get('description')} {video.get('thumbnail_description')}" for video in videos]
+        best_video_idx = await self.openai_client.select_most_relevant_yt(keyword, concat_descriptions, oai_messages)
+        best_video = videos[best_video_idx]
+
+        # 4. Format the selected video message to send and cache
+        return self._format_video_message(best_video)
+
+    async def _search_youtube(self, keyword: str) -> List[dict]:
+        """Search YouTube and return a list of video details.
+        Args:
+            query (str): The search query to use.
+        Returns:
+            List[dict]: A list of video dictionaries containing video details.
+        """
+        try:
+            request = self.youtube_client.search().list(
+                part="snippet",
+                maxResults=MAX_SEARCH_RESULTS,
+                q=keyword,
+                type="video"
+            )
+            response = request.execute()
+            items = response.get("items", [])
+            videos = []
+            for item in items:
+                video_id = item.get("id", {}).get("videoId")
+                snippet = item.get("snippet", {})
+                videos.append({
+                    "video_id": video_id,
+                    "title": snippet.get("title"),
+                    "author": snippet.get("channelTitle"),
+                    "description": snippet.get("description"),
+                    "thumbnail_url": snippet.get("thumbnails", {}).get("default", {}).get("url"),
+                    "published_at": snippet.get("publishedAt")
+                })
+            return videos
+        except Exception as e:
+            logger.error(f"Error searching YouTube: {str(e)}")
+            return []
+
+    # ------------------ YOUTUBE FORMATTING ------------------
+
     def _format_video_message(self, video: dict) -> Tuple[str, str]:
         """Format the selected video into a message to send and cache.
         Args:
@@ -116,49 +191,3 @@ class YouTubeProcessor:
         message_to_cache = f"[YouTube ::: {title} ::: {author} ::: {description} ::: Thumbnail Description: {thumbnail_description}]"
         return message_to_send, message_to_cache
         
-# TODO: YouTube keyword search
-    # async def search_by_keyword(self, keyword: str):
-    #     logger.info(f"Searching YouTube for '{keyword}'...")
-    #     videos = await self._search_youtube(keyword)
-    #     if not videos:
-    #         logger.error("Failed to search YouTube.")
-    #         return None
-        
-    #     logger.info(f"Found {len(videos)} videos.")
-    #     # Process and rank the videos
-    #     selected_video = await self.select_relevant_video(videos)
-    #     # TODO: Continue processing the video
-    #     # Process and rank the videos
-
-    # async def _search_youtube(self, keyword: str) -> List[dict]:
-    #     """Search YouTube and return a list of video details.
-    #     Args:
-    #         query (str): The search query to use.
-    #     Returns:
-    #         List[dict]: A list of video dictionaries containing video details.
-    #     """
-    #     try:
-    #         request = self.youtube_client.search().list(
-    #             part="snippet",
-    #             maxResults=MAX_SEARCH_RESULTS,
-    #             q=keyword,
-    #             type="video"
-    #         )
-    #         response = request.execute()
-    #         items = response.get("items", [])
-    #         videos = []
-    #         for item in items:
-    #             video_id = item.get("id", {}).get("videoId")
-    #             snippet = item.get("snippet", {})
-    #             videos.append({
-    #                 "video_id": video_id,
-    #                 "title": snippet.get("title"),
-    #                 "author": snippet.get("channelTitle"),
-    #                 "description": snippet.get("description"),
-    #                 "thumbnail_url": snippet.get("thumbnails", {}).get("default", {}).get("url"),
-    #                 "published_at": snippet.get("publishedAt")
-    #             })
-    #         return videos
-    #     except Exception as e:
-    #         logger.error(f"Error searching YouTube: {str(e)}")
-    #         return []

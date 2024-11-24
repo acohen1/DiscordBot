@@ -7,12 +7,16 @@ from models.threads import GLThread
 from pydispatch import dispatcher
 from processors.msg import MessageProcessor
 from processors.gif import GIFProcessor
+from processors.yt import YouTubeProcessor
 import discord
 from clients.discord_client import DiscordClient
 import asyncio
 from typing import List, Dict
 
 logger = logging.getLogger("ChainOfThoughtPipeline")
+
+# TODO: Add 'research' response type that searches the web for information and returns a summary of the results.
+# We inject this sumnmary as a system message in the chat to send for OpenAI to process.
 
 class ChainOfThoughtPipeline:
     """Handles the pipeline for processing events after AWAITING_RESPONSE."""
@@ -23,6 +27,7 @@ class ChainOfThoughtPipeline:
         self.cache = GLCache()
         self.message_processor = MessageProcessor()
         self.gif_processor = GIFProcessor()
+        self.youtube_processor = YouTubeProcessor()
         dispatcher.connect(self._on_pipeline_wrapper, signal=AWAITING_RESPONSE)
 
     def _on_pipeline_wrapper(self, message: discord.Message):
@@ -73,8 +78,14 @@ class ChainOfThoughtPipeline:
 
         elif content_type == "youtube":
             logger.info(f"Content type is YouTube for user {user_id}.")
+            if await self._process_youtube_response(user_id, user_channel, message, oai_messages):
+                emit_event(ON_RESPONSE_SENT)
+            else:
+                logger.error(f"Failed to process YouTube response for user {user_id}.")
         elif content_type == "website":
             logger.info(f"Content type is website for user {user_id}.")
+        # elif content_type == "research":
+        #     pass
 
     async def _process_message_response(self, user_id: int, user_channel: discord.TextChannel, message: discord.Message, user_thread: GLThread) -> bool:
         attempts = 0
@@ -124,6 +135,8 @@ class ChainOfThoughtPipeline:
             user_channel (discord.TextChannel): The user's Discord channel.
             message (discord.Message): The user's message.
             oai_messages (List[Dict]): The user's messages in OpenAI
+        Returns:
+            bool: True if the GIF was sent successfully, False otherwise.
         """
         search_query = await self.openai_client.generate_search_query("gif", oai_messages)
         gif_url, message_to_cache = await self.gif_processor.search_by_query(search_query)
@@ -138,4 +151,29 @@ class ChainOfThoughtPipeline:
                 return False
             
         logger.info(f"Successfully sent GIF to user {user_id}")
+        return True
+    
+    async def _process_youtube_response(self, user_id: int, user_channel: discord.TextChannel, message: discord.Message, oai_messages: List[Dict]) -> bool:
+        """Handle YouTube content response from the assistant.
+        Args:
+            user_id (int): The user's Discord ID.
+            user_channel (discord.TextChannel): The user's Discord channel.
+            message (discord.Message): The user's message.
+            oai_messages (List[Dict]): The user's messages in OpenAI
+        Returns:
+            bool: True if the YouTube video was sent successfully, False otherwise.
+        """
+        search_query = await self.openai_client.generate_search_query("youtube", oai_messages)
+        message_to_send, message_to_cache = await self.youtube_processor.search_by_keyword(search_query, oai_messages)
+        if not message_to_send:
+            logger.error(f"Failed to find YouTube video for user {user_id}")
+            return False
+        discord_msg = await user_channel.send(message_to_send, reference=message)
+        if discord_msg:
+            discord_msg.content = message_to_cache
+            if not await self.cache.add_discord_message(discord_msg):
+                logger.error(f"Failed to add YouTube video to GLThread for user {user_id}.")
+                return False
+
+        logger.info(f"Successfully sent YouTube video to user {user_id}")
         return True

@@ -143,7 +143,7 @@ class GIFProcessor:
                         'url': gif_url,
                         'description': frame_description,
                     }
-                    logger.info(f"Selected GIF: {gif.get('title')} with description: {gif.get('description')}")
+                    logger.info(f"Selected GIF: {gif.get('title')} with description: {gif.get('description')[:30]}")
                     return self._format_gif_message(gif)
         except Exception as e:
             logger.error(f"Unexpected error occurred during GIF search: {e}")

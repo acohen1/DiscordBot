@@ -44,6 +44,7 @@ class ImageProcessor:
             image_path = os.path.join(temp_dir, "image.jpg") if not is_gif else os.path.join(temp_dir, "image.gif")
             
             # Download the image/GIF
+            logger.debug(f"Downloading {'GIF' if is_gif else 'image'} from {image_url}")
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(image_url) as response:
@@ -57,10 +58,15 @@ class ImageProcessor:
             
             # If we downloaded a GIF, extract the first frame
             if is_gif:
-                with Image.open(image_path) as gif:
-                    image_path = os.path.join(temp_dir, "image.jpg")
-                    gif.seek(0)
-                    gif.convert('RGB').save(image_path, "JPEG")
+                logger.debug("Extracting first frame from GIF...")
+                try:
+                    with Image.open(image_path) as gif:
+                        image_path = os.path.join(temp_dir, "image.jpg")
+                        gif.seek(0)
+                        gif.convert('RGB').save(image_path, "JPEG")
+                except Exception as e:
+                    logger.error(f"Error extracting first frame from GIF: {str(e)}")
+                    return "No Description Available"
             
             # Encode the image to base64
             async with aiofiles.open(image_path, "rb") as image_file:

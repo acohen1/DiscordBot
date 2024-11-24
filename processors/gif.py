@@ -1,12 +1,13 @@
 import threading
 from core.config import GIPHY_API_KEY, MAX_SEARCH_RESULTS
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 from clients.openai_client import OpenAIClient
 from processors.img import ImageProcessor
 import aiohttp
 from bs4 import BeautifulSoup
 import logging
 import re
+import asyncio
 
 logger = logging.getLogger("GifProcessor")
 
@@ -30,6 +31,8 @@ class GIFProcessor:
             self.openai_client = OpenAIClient.get_instance()
             self.img_processor = ImageProcessor()
             self.initialized = True    # Mark this instance as initialized
+
+# ------------------ GIF URL PROCESSING ------------------
 
     async def search_by_url(self, url: str) -> str:
         """Process a Giphy URL and format the response.
@@ -67,7 +70,7 @@ class GIFProcessor:
                 async with session.get(page_url, headers=headers, timeout=10) as response:
                     if response.status != 200:
                         logger.warning(f"Failed to fetch page content: HTTP {response.status}")
-                        return None
+                        return "No URL", "No title"
 
                     # Parse the page content
                     page_content = await response.text()
@@ -92,7 +95,62 @@ class GIFProcessor:
         except Exception as e:
             logger.error(f"Unexpected error occurred: {e}")
             return "No URL", "No title"
-    
+
+# ------------------ GIF QUERY PROCESSING ------------------
+
+    async def search_by_query(self, query: str) -> Tuple[str, str]:
+        """Search Giphy for the given query and return the selected GIF as a message to send and cache.
+        Args:
+            query (str): The query to search for.
+        Returns:
+            Tuple[str, str]: The message to send and cache.
+        """
+        logger.info(f"Searching GIFs for query '{query}'...")
+
+        # Build the Giphy translate API URL
+        search_url = 'https://api.giphy.com/v1/gifs/translate'
+        params = {
+            'api_key': GIPHY_API_KEY,
+            's': query.lower().replace("gif", "").strip(),
+            'lang': 'en'
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(search_url, params=params) as response:
+                    if response.status != 200:
+                        logger.warning(f"Failed to fetch GIF: HTTP {response.status}")
+                        return "No results", ""
+
+                    data = await response.json()
+                    gif_data = data.get('data')
+                    if not gif_data:
+                        logger.warning(f"No GIF found for the query '{query}'.")
+                        return "No results", ""
+
+                    # Extract the GIF data
+                    title = gif_data.get("title", "No title")
+                    gif_url = gif_data.get("url", "No URL")
+                    gif_direct_url = gif_data.get("images", {}).get("downsized", {}).get("url")
+
+                    # Describe the first frame of the GIF
+                    logger.info(f"Describing image for GIF: {title}")
+                    frame_description = await self.img_processor.describe_image(gif_direct_url, is_gif=True)
+
+                    # Format the selected GIF message to send and cache
+                    gif = {
+                        'title': title,
+                        'url': gif_url,
+                        'description': frame_description,
+                    }
+                    logger.info(f"Selected GIF: {gif.get('title')} with description: {gif.get('description')}")
+                    return self._format_gif_message(gif)
+        except Exception as e:
+            logger.error(f"Unexpected error occurred during GIF search: {e}")
+            return "No results", ""
+
+# ------------------ GIF FORMATTING ------------------
+
     def _format_gif_message(self, gif: dict) -> Tuple[str, str]:
         """Format the selected video into a message to send and cache.
         Args:

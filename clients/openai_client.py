@@ -102,6 +102,7 @@ class OpenAIClient:
             return False
         
     async def image_describer(self, base64_str: str) -> str:
+        """Given a base64 encoded image, request a description from OpenAI."""
         try:                    
             # Prepare and send the request to OpenAI for image analysis
             system_prompt = (
@@ -135,6 +136,7 @@ class OpenAIClient:
             
             # Retrieve and return the result from OpenAI
             result = response.choices[0].message.content if response.choices else "No description available"
+            logger.debug(f"Image description: {result}")
             return result
         except Exception as e:
             logger.error(f"Error processing image content: {str(e)}")
@@ -202,11 +204,15 @@ class OpenAIClient:
             "If a user responds with a Website, YouTube, or GIF, the bot should respond with a message.\n"
             "**ONLY REPLY WITH ONE OF THE FOLLOWING WORDS:**: message, GIF, YouTube, or Website"
         )
+
+        affix_prompt = (
+            "Now determine the content type of your response: message, GIF, YouTube, or Website."
+        )
         # Prefix the messages with the system prompt
         messages = [
             {"role": "system", "content": system_prompt},
             *OAI_messages,
-            {"role": "user", "content": "Now determine the content type of your response: message, GIF, YouTube, or Website."}
+            {"role": "user", "content": affix_prompt}
         ]
 
         # Send the messages to OpenAI for processing
@@ -241,3 +247,102 @@ class OpenAIClient:
                 await stream.until_done()
         except Exception as e:
             logger.error(f"Error streaming assistant response: {e}")
+
+    async def generate_search_query(self, content_type: str, OAI_messages: List[Dict]) -> Optional[str]:
+        """Given a content type, request a search query from OpenAI based on the provided messages.
+        Args:
+            content_type (str): The content type to search for: 'message', 'gif', 'youtube', or 'website'.
+            OAI_messages (List[Dict]): The list of messages to provide to OpenAI.
+        Returns:
+            Optional[str]: The search query response from OpenAI or None if an error occurs.
+        """
+        if content_type == "gif":
+            search_type = "GIF"
+        elif content_type == "youtube":
+            search_type = "YouTube video"
+        elif content_type == "website":
+            search_type = "website"
+
+        system_prompt = (
+            "Your purpose is to generate a search query based on the most recent messages.\n"
+            "Use the context of the conversation to determine the most relevant search query.\n"
+            "Limit the query length to ensure clarity and relevance in a response.\n"
+            "Do not directly copy the user's message, but use it to generate a relevant search query.\n"
+            f"You are searching for a {search_type} based on the most recent messages."
+            "Reply only with the search query, do not include any additional text, links, media, or explanations.\n"
+        )
+
+        affix_prompt = (
+            f"Now generate a search query for a {search_type} based on the most recent messages."
+        )
+
+        messages = [
+            {"role": "system", "content" : system_prompt},
+            *OAI_messages,
+            {"role": "user", "content": affix_prompt}
+        ]
+
+        # Send to OpenAI for a response
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.chain_of_thought_model_id,
+                messages=messages,
+                max_tokens=50,
+                temperature=self.message_model_temp
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            logger.error(f"Error processing search query: {e}")
+            return None
+
+    # async def select_most_relevant_media(self, query: str, media_descriptions: List[str], OAI_messages: List[Dict]) -> int:
+    #     """Given a search query and a list of media descriptions, select the index of the most relevant media description based on the recent conversation.
+    #     Args:
+    #         query (str): The search query used to find the media.
+    #         media_descriptions (List[str]): The list of media descriptions to choose from.
+    #         OAI_messages (List[Dict]): The list of messages to provide to OpenAI
+    #     Returns:
+    #         int: The index of the most relevant media description, or 0 if an error occurs.
+    #     """
+    #     system_prompt = (
+    #         "Your purpose is to select the most relevant media from a list of descriptions.\n"
+    #         "Use the provided search query and the context of the conversation to determine the most relevant media.\n"
+    #         "Reply only with the number corresponding to the index of the selected media description.\n"
+    #         "Do not include any additional text in your response."
+    #     )
+
+    #     affix_prompt = (
+    #         "Now select the most relevant media from the list of descriptions.\n"
+    #         f"The query is: {query}\n"
+    #         f"The descriptions are:"
+    #     )
+    #     for i, description in enumerate(media_descriptions):
+    #         affix_prompt += f"\n{i+1}. {description}"
+
+    #     messages = [
+    #         {"role": "system", "content": system_prompt},
+    #         *OAI_messages,
+    #         {"role": "user", "content": affix_prompt},
+    #     ]
+
+    #     # Send to OpenAI for a response
+    #     try:
+    #         response = await self.client.chat.completions.create(
+    #             model=self.chain_of_thought_model_id,
+    #             messages=messages,
+    #             max_tokens=10,
+    #             temperature=self.chain_of_thought_temp
+    #         )
+    #         content = response.choices[0].message.content.strip()
+
+    #         # Validate and convert to index
+    #         if content.isdigit():
+    #             index = int(content)
+    #             if 1 <= index <= len(media_descriptions):  # Ensure it's within the valid range
+    #                 return index - 1
+    #         logger.error(f"Invalid response content: {content}")
+    #     except Exception as e:
+    #         logger.error(f"Error selecting most relevant media: {e}")
+
+    #     # Default fallback
+    #     return 0

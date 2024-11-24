@@ -22,7 +22,7 @@ class GLMessage:
         self.target_message_id = target_message_id
 
     def __str__(self):
-        return f"{self.timestamp} - {self.message_id} - {self.role if self.role=="user" else "asst"} - {self.content}" #[:250]
+        return f"{self.timestamp} - {self.message_id} - {self.role if self.role=="user" else "asst"} - {self.content[:250].strip()}"
     
     def __lt__(self, other):
         return self.timestamp < other.timestamp
@@ -113,7 +113,6 @@ class GLThread:
     def __init__(
         self,
         discord_user_id: int,
-        assistant_thread_id: str,
         conversation: Optional[GLConversation] = None,
         max_history_length: int = 100,
     ):
@@ -126,7 +125,6 @@ class GLThread:
             max_history_length (int, optional): The maximum number of messages to store in the conversation history. Defaults to 100.
         """
         self.discord_user_id = discord_user_id
-        self.assistant_thread_id = assistant_thread_id
         self.conversation = conversation or GLConversation(max_history_length=max_history_length)
 
     def add_message(self, message: GLMessage) -> bool:
@@ -177,7 +175,6 @@ class GLThread:
         """String representation of the thread."""
         return (
             f"Discord User ID: {self.discord_user_id}\n"
-            f"Thread ID: {self.assistant_thread_id}\n"
             f"Conversation:\n{self.conversation}"
         )
 

@@ -1,4 +1,3 @@
-import openai
 import threading
 from models.threads import GLMessage, GLThread, CombinedGLThread
 from processors.yt import YouTubeProcessor
@@ -11,7 +10,7 @@ import discord
 from clients.discord_client import DiscordClient
 from clients.openai_client import OpenAIClient
 import re
-from typing import List, Dict, Union, Optional
+from typing import List, Dict, Union
 logger = logging.getLogger('AsyncOpenAI')
 
 class MessageProcessor:

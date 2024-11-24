@@ -1,8 +1,7 @@
 import threading
 from core.config import GOOGLE_API_KEY, MAX_SEARCH_RESULTS
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 from clients.openai_client import OpenAIClient
-from processors.img import ImageProcessor
 import aiohttp
 from bs4 import BeautifulSoup
 import logging

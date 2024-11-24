@@ -1,6 +1,7 @@
 import os
 from dotenv import load_dotenv
 import logging
+from sys_prompt import PROMPT
 
 load_dotenv()
 
@@ -9,14 +10,14 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 GIPHY_API_KEY = os.getenv("GIPHY_API_KEY")
 
-ASSISTANT_ID = os.getenv("ASSISTANT_ID")
-
 COT_MODEL_ID = os.getenv("COT_MODEL_ID")    # Used for decision making in handling conversations
 COT_MODEL_TEMP = 0.2
 COT_MAX_ATTEMPTS = 3
 
 MSG_MODEL_ID = os.getenv("MSG_MODEL_ID")    # Used for generating descriptions, search queries, etc. (Not for assistant responses, this is handled by the ASSISTANT API on the OAI dashboard)
 MSG_MODEL_TEMP = 0.8
+MSG_MAX_FOLLOWUPS = 3
+SYS_PROMPT = PROMPT
 
 IMG_MODEL_ID = os.getenv("IMG_MODEL_ID")    # Used for generating image descriptions
 IMG_MODEL_TEMP = 0.5
@@ -35,8 +36,6 @@ if not GOOGLE_API_KEY:
     raise ValueError("GOOGLE_API_KEY is not set in .env")
 if not GIPHY_API_KEY:
     raise ValueError("GIPHY_API_KEY is not set in .env")
-if not ASSISTANT_ID:
-    raise ValueError("ASSISTANT_ID is not set in .env")
 
 # Centralized logging configuration
 def setup_logging(level=logging.INFO):

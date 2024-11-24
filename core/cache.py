@@ -8,7 +8,6 @@ import discord
 from clients.openai_client import OpenAIClient
 import threading
 from typing import List, Optional, Set
-import asyncio
 
 # TODO: FIX THREAD INITIALIZATION FOR PROPER CHRONOLOGICAL ORDER
 # TODO: WE WILL ADD A 'TARGET_MESSAGE_ID' TO THE GLMESSAGE OBJECT TO TRACK THE MESSAGE THAT TRIGGERED THE BOT RESPONSE
@@ -73,9 +72,11 @@ class GLCache:
         """
 
         # 1. Ensure thread for all potential users in the message exist
-        if not await self._ensure_threads_exist(message):
-            logger.error(f"Failed to ensure threads exist for message {message.id}.")
-            return None
+        user_ids_to_check = {message.author.id}  # Start with the message author
+        user_ids_to_check.update(user.id for user in message.mentions)  # Add all mentioned users
+        for user_id in user_ids_to_check:
+            if user_id not in self.threads:
+                self.threads[user_id] = GLThread(user_id, max_history_length=CACHE_CONVERSATIONS_LEN)
             
         # 2. Process the message
         gl_message = await self.message_processor.discord_to_GLMessage(message)
@@ -90,12 +91,14 @@ class GLCache:
         reference_message = message.reference.resolved if message.reference else None
         if reference_message and reference_message.author.id != self.discord_client.user.id:
             # Add to the referenced user's thread
-            if not await self._add_to_threads(gl_message, self.threads.get(reference_message.author.id)):
+            target_thread = self.threads.get(reference_message.author.id)
+            if not target_thread.add_message(gl_message):
                 logger.error(f"Failed to add message {gl_message.message_id} to conversation for user {reference_message.author.name}.")
                 return None
         elif reference_message and reference_message.author.id == self.discord_client.user.id:
             # Add to the bot's thread
-            if not await self._add_to_threads(gl_message, self.threads.get(self.discord_client.user.id)):
+            target_thread = self.threads.get(self.discord_client.user.id)
+            if not target_thread.add_message(gl_message):
                 logger.error(f"Failed to add message {gl_message.message_id} to conversation for the bot (direct reply).")
                 return None
             added_to_bot_thread = True
@@ -103,61 +106,18 @@ class GLCache:
         # 4. Handle messages mentioning the bot (triggering the bot's response)
         if not added_to_bot_thread and self.discord_client.user.mentioned_in(message):
             # Add the message to the bot's thread
-            if not await self._add_to_threads(gl_message, self.threads.get(self.discord_client.user.id)):
+            target_thread = self.threads.get(self.discord_client.user.id)
+            if not target_thread.add_message(gl_message):
                 logger.error(f"Failed to add message {gl_message.message_id} to conversation for the bot.")
                 return None
             added_to_bot_thread = True
             
-        # 6. Add the message to the author's thread
-        if not await self._add_to_threads(gl_message, self.threads.get(message.author.id)):
+        # 5. Add the message to the author's thread
+        target_thread = self.threads.get(message.author.id)
+        if not target_thread.add_message(gl_message):
             logger.error(f"Failed to add message {gl_message.message_id} to conversation for user {message.author.name}.")
             return None
         
         # Message added successfully
-        logger.info(f"Added {message.author.name} message to GLCache and OAI Assistant thread.")
+        logger.info(f"Added message to GLCache: {message.author.name} - {gl_message.content[:50]}")
         return gl_message
-
-    async def _ensure_threads_exist(self, message: discord.Message) -> bool:
-        """Ensure the GLCache and assistant threads exist for all users mentioned in the given message."""
-        user_ids_to_check = {message.author.id}  # Start with the message author
-        user_ids_to_check.update(user.id for user in message.mentions)  # Add all mentioned users
-
-        tasks = []  # Prepare async tasks for creating threads
-        for user_id in user_ids_to_check:
-            if user_id not in self.threads:
-                tasks.append(self._create_thread_for_user(user_id))
-
-        if tasks:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for user_id, result in zip(user_ids_to_check, results):
-                if isinstance(result, Exception):
-                    logger.error(f"Failed to create thread for user {user_id}: {result}")
-                    continue
-
-        return True
-
-    async def _create_thread_for_user(self, user_id: int) -> bool:
-        """Create a thread for the given user and add it to GLCache."""
-        try:
-            asst_id = await self.openai_client.create_asst_thread(user_id)
-            self.threads[user_id] = GLThread(user_id, asst_id, max_history_length=CACHE_CONVERSATIONS_LEN)
-            return True
-        except Exception as e:
-            logger.error(f"Exception while creating thread for user {user_id}: {e}")
-            return False
-        
-    async def _add_to_threads(self, gl_message: GLMessage, target_thread: GLThread) -> bool:
-        """Add a GLMessage to the target GLCache and OAI Assistant thread 
-        """        
-        # Add the message to the target thread
-        if not target_thread.add_message(gl_message):
-            logger.error(f"Failed to add GLMessage {gl_message.message_id} to GLThread.")
-            return False
-        
-        # Add the message to the user's OAI assistant thread
-        if not await self.openai_client.add_to_asst_thread(target_thread.assistant_thread_id, gl_message):
-            logger.error(f"Failed to add GLMessage {gl_message.message_id} to OAI assistant thread.")
-            return False
-        
-        return True
-    

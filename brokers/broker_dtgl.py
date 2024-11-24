@@ -70,7 +70,7 @@ class DTGLBroker:
         if await self.command_processor.process_commands(message, self.cache.threads):
             return
         
-        # 3. Add the message to the internal GLCache and OAI Assistant thread for necessary users
+        # 3. Add the message to the internal GLCache for necessary users
         gl_message = await self.cache.add_discord_message(message)
 
         # 4. If the message was added, emit awaiting response to begin the CoT pipeline if the bot was mentioned

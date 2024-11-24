@@ -1,6 +1,5 @@
 import threading
 import logging
-from models.threads import GLThread
 from clients.openai_client import OpenAIClient
 import discord
 
@@ -94,17 +93,7 @@ class CommandProcessor:
             # Clear the conversation
             is_cleared = threads[user_id].clear_conversation()
             if is_cleared:
-                # Delete the assistant thread
-                old_thread_id = threads[user_id].assistant_thread_id
-                await self.openai_client.client.beta.threads.delete(old_thread_id)
-
-                # Create a new thread
-                new_thread_id = await self.openai_client.create_asst_thread(user_id)
-                threads[user_id].assistant_thread_id = new_thread_id
-
-                logger.info(f"Created new OAI thread for user {message.author.name}.")
-                
-
+                logger.info(f"Cleared thread for {message.author.name}.")
                 await message.channel.send("All gone <:brainlet:1300560937778155540>")
             else:
                 await message.channel.send("I can't do that right now. <:GreggLimper:975696064478847016>")

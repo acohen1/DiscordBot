@@ -2,3 +2,4 @@
 __pycache__/
 venv/
 rules.txt
+sys_prompt.py

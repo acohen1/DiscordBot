@@ -67,7 +67,6 @@ class GLCache:
         Returns:
             Optional[GLMessage]: The GLMessage object created from the discord message if successful, None otherwise.
         """
-
         # 1. Ensure thread for all potential users in the message exist
         user_ids_to_check = {message.author.id}  # Start with the message author
         user_ids_to_check.update(user.id for user in message.mentions)  # Add all mentioned users
@@ -83,12 +82,14 @@ class GLCache:
         
         # Track if message has already been added to the bot's thread
         added_to_bot_thread = False
+        direct_reply_user = None
 
         # 3. Handle direct replies
         reference_message = message.reference.resolved if message.reference else None
         if reference_message and reference_message.author.id != self.discord_client.user.id:
             # Add to the referenced user's thread
             target_thread = self.threads.get(reference_message.author.id)
+            direct_reply_user = reference_message.author
             if not target_thread.add_message(gl_message):
                 logger.error(f"Failed to add message {gl_message.message_id} to conversation for user {reference_message.author.name}.")
                 return None
@@ -99,6 +100,14 @@ class GLCache:
                 logger.error(f"Failed to add message {gl_message.message_id} to conversation for the bot (direct reply).")
                 return None
             added_to_bot_thread = True
+
+        # 3. Handle messages mentioning another user (not the bot or the direct reply)
+        for user in message.mentions:
+            if user.id != self.discord_client.user.id and user != direct_reply_user:
+                target_thread = self.threads.get(user.id)
+                if not target_thread.add_message(gl_message):
+                    logger.error(f"Failed to add message {gl_message.message_id} to conversation for user {user.name}.")
+                    return None
 
         # 4. Handle messages mentioning the bot (triggering the bot's response)
         if not added_to_bot_thread and self.discord_client.user.mentioned_in(message):

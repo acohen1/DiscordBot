@@ -23,7 +23,7 @@ class GLMessage:
         self.target_message_id = target_message_id
 
     def __str__(self):
-        return f"{self.timestamp.strftime('%Y-%m-%d %H:%M:%S')} - {self.role if self.role == 'user' else 'asst'} - {self.content[:100].strip()}"
+        return f"{self.timestamp.strftime('%Y-%m-%d %H:%M:%S')} - {self.role if self.role == 'user' else 'asst'} - {self.content[:250].strip()}"
     
     def __lt__(self, other):
         return self.timestamp < other.timestamp

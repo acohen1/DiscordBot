@@ -36,6 +36,12 @@ if not GOOGLE_API_KEY:
     raise ValueError("GOOGLE_API_KEY is not set in .env")
 if not GIPHY_API_KEY:
     raise ValueError("GIPHY_API_KEY is not set in .env")
+if not COT_MODEL_ID:
+    raise ValueError("COT_MODEL_ID is not set in .env")
+if not MSG_MODEL_ID:
+    raise ValueError("MSG_MODEL_ID is not set in .env")
+if not IMG_MODEL_ID:
+    raise ValueError("IMG_MODEL_ID is not set in .env")
 
 # Centralized logging configuration
 def setup_logging(level=logging.INFO):

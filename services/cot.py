@@ -107,6 +107,20 @@ class ChainOfThoughtPipeline:
                 await asyncio.sleep(2**attempts)  # Exponential backoff
                 attempts += 1
                 continue
+            
+            # # Remove "Gregg Limper: " from the response if it appears
+            # if response.startswith("Gregg Limper: "):
+            #     logger.info(f"Removing prefix from bot response...")
+            #     response = response.replace("Gregg Limper: ", "")
+
+            # TODO: Fix for current processor.msg implementation; still monitoring for user prefixes
+            # Remove ANY user prefix from the response if it appears
+            for member in user_channel.members:
+                if response.startswith(f"{member.display_name}: "):
+                    logger.info(f"Removing prefixed '{member.display_name}' from bot response...")
+                    response = response.replace(f"{member.display_name}: ", "")
+                    break
+
             logger.info(f"Generated response for user {user_id}: {response[:50]}...")
 
             # 2. Send the response to the user

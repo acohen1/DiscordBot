@@ -62,6 +62,11 @@ class MessageProcessor:
                 image_description = await self.img_processor.describe_image(image_url)
                 processed_message += f" [Image ::: {image_description}]"
         
+        # TODO: Monitor effect on assistant replies
+        # 4. Prefix the message with the user's name if it's a user message
+        if message.author.id != self.discord_client.user.id:
+            processed_message = f"{message.author.display_name}: {processed_message}"
+        
         return GLMessage(
             role='assistant' if message.author.id == self.discord_client.user.id else 'user',
             content=processed_message,

@@ -70,16 +70,19 @@ class GLCache:
         async def collect_thread_replies(message: discord.Message):
             """Recursively collect all messages in a thread."""
             thread_messages = []
+            mention_ids = set()
+        
             while message:
                 gl_message = await self.message_processor.discord_to_GLMessage(message)
                 if gl_message and gl_message.content.strip():
                     thread_messages.append((message.author, gl_message))
+                    mention_ids.update(user.id for user in message.mentions)
                 # Move to the parent message if it exists
                 message = message.reference.resolved if message.reference else None
-            return list(reversed(thread_messages))  # Reverse to get chronological order
+            return list(reversed(thread_messages)), mention_ids  # Reverse to get chronological order
 
         # Step 1: Collect all messages in the thread
-        full_thread = await collect_thread_replies(message)
+        full_thread, mention_ids = await collect_thread_replies(message)
         if not full_thread:
             logger.error("Failed to collect thread for message.")
             return None
@@ -88,8 +91,10 @@ class GLCache:
         participating_user_ids = set()
         for author, _ in full_thread:
             participating_user_ids.add(author.id)
-        for user in message.mentions:
-            participating_user_ids.add(user.id)
+        # Add mentioned users from the collected thread
+        participating_user_ids.update(mention_ids)
+        # Add mentions in the current message
+        participating_user_ids.update(user.id for user in message.mentions)
 
         # Step 3: Ensure threads exist for all participants
         for user_id in participating_user_ids:

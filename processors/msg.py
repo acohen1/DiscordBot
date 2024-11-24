@@ -49,13 +49,13 @@ class MessageProcessor:
         """
         processed_message = message.content
 
-        # Replace mentions with the users' name
+        # 1. Replace mentions with the users' name
         processed_message = self._replace_mentions(processed_message)
 
-        # Process links
+        # 2. Process links
         processed_message = await self._process_links(processed_message)
 
-        # Process image content
+        # 3. Process image content
         for attachment in message.attachments:
             if 'image' in attachment.content_type:
                 image_url = attachment.url

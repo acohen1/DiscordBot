@@ -67,63 +67,47 @@ class GLCache:
         Returns:
             Optional[GLMessage]: The GLMessage object created from the discord message if successful, None otherwise.
         """
-        # 1. Ensure thread for all potential users in the message exist
-        user_ids_to_check = {message.author.id}  # Start with the message author
-        user_ids_to_check.update(user.id for user in message.mentions)  # Add all mentioned users
-        for user_id in user_ids_to_check:
+        async def collect_thread_replies(message: discord.Message):
+            """Recursively collect all messages in a thread."""
+            thread_messages = []
+            while message:
+                gl_message = await self.message_processor.discord_to_GLMessage(message)
+                if gl_message and gl_message.content.strip():
+                    thread_messages.append((message.author, gl_message))
+                # Move to the parent message if it exists
+                message = message.reference.resolved if message.reference else None
+            return list(reversed(thread_messages))  # Reverse to get chronological order
+
+        # Step 1: Collect all messages in the thread
+        full_thread = await collect_thread_replies(message)
+        if not full_thread:
+            logger.error("Failed to collect thread for message.")
+            return None
+
+        # Step 2: Identify all participating users
+        participating_user_ids = set()
+        for author, _ in full_thread:
+            participating_user_ids.add(author.id)
+        for user in message.mentions:
+            participating_user_ids.add(user.id)
+
+        # Step 3: Ensure threads exist for all participants
+        for user_id in participating_user_ids:
             if user_id not in self.threads:
                 self.threads[user_id] = GLThread(user_id, max_history_length=CACHE_CONVERSATIONS_LEN)
-            
-        # 2. Process the message
-        gl_message = await self.message_processor.discord_to_GLMessage(message)
-        if not gl_message or not gl_message.content.strip():
-            logger.error(f"No message for user {message.author.name}.")
-            return None
-        
-        # Track if message has already been added to the bot's thread
-        added_to_bot_thread = False
-        direct_reply_user = None
 
-        # 3. Handle direct replies
-        reference_message = message.reference.resolved if message.reference else None
-        if reference_message and reference_message.author.id != self.discord_client.user.id:
-            # Add to the referenced user's thread
-            target_thread = self.threads.get(reference_message.author.id)
-            direct_reply_user = reference_message.author
-            if not target_thread.add_message(gl_message):
-                logger.error(f"Failed to add message {gl_message.message_id} to conversation for user {reference_message.author.name}.")
-                return None
-        elif reference_message and reference_message.author.id == self.discord_client.user.id:
-            # Add to the bot's thread
-            target_thread = self.threads.get(self.discord_client.user.id)
-            if not target_thread.add_message(gl_message):
-                logger.error(f"Failed to add message {gl_message.message_id} to conversation for the bot (direct reply).")
-                return None
-            added_to_bot_thread = True
+       # Step 4: Add all messages in the thread to each participant's thread
+        for author, gl_message in full_thread:
+            for user_id in participating_user_ids:
+                target_thread = self.threads.get(user_id)
+                # Check for duplicates before adding
+                if not target_thread.contains_message(gl_message.message_id):
+                    if not target_thread.add_message(gl_message):
+                        logger.error(f"Failed to add message {gl_message.message_id} to conversation for user {user_id}.")
+                        return None
+                else:
+                    logger.debug(f"Message {gl_message.message_id} already exists in conversation for user {user_id}.")
 
-        # 3. Handle messages mentioning another user (not the bot or the direct reply)
-        for user in message.mentions:
-            if user.id != self.discord_client.user.id and user != direct_reply_user:
-                target_thread = self.threads.get(user.id)
-                if not target_thread.add_message(gl_message):
-                    logger.error(f"Failed to add message {gl_message.message_id} to conversation for user {user.name}.")
-                    return None
-
-        # 4. Handle messages mentioning the bot (triggering the bot's response)
-        if not added_to_bot_thread and self.discord_client.user.mentioned_in(message):
-            # Add the message to the bot's thread
-            target_thread = self.threads.get(self.discord_client.user.id)
-            if not target_thread.add_message(gl_message):
-                logger.error(f"Failed to add message {gl_message.message_id} to conversation for the bot.")
-                return None
-            added_to_bot_thread = True
-            
-        # 5. Add the message to the author's thread
-        target_thread = self.threads.get(message.author.id)
-        if not target_thread.add_message(gl_message):
-            logger.error(f"Failed to add message {gl_message.message_id} to conversation for user {message.author.name}.")
-            return None
-        
-        # Message added successfully
-        logger.info(f"Added message to GLCache: {message.author.name} - {gl_message.content[:50]}")
-        return gl_message
+        # Step 5: Log success
+        logger.info(f"Added full thread to all participants' threads: {[m[1].content[:50] for m in full_thread]}")
+        return full_thread[-1][1]  # Return the GLMessage for the original message

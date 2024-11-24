@@ -201,7 +201,6 @@ class YouTubeProcessor:
         message_to_cache = f"[YouTube ::: {title} ::: {author} ::: {description} ::: Thumbnail Description: {thumbnail_description}]"
         return message_to_send, message_to_cache
     
-    def sanitize_text(text: str) -> str:
+    def sanitize_text(self, text: str) -> str:
         """Remove any character that could break Markdown formatting."""
         return re.sub(r'[^\w\s.,!?:;\'"-]', '', text)
-        

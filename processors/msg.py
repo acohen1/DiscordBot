@@ -1,5 +1,5 @@
 import threading
-from models.threads import GLMessage, GLThread, CombinedGLThread
+from models.threads import GLMessage, GLThread
 from processors.yt import YouTubeProcessor
 from processors.gif import GIFProcessor
 from processors.img import ImageProcessor
@@ -134,18 +134,12 @@ class MessageProcessor:
 
         return processed_message
     
-    async def GLThread_to_OAI(self, thread: Union[GLThread, CombinedGLThread]) -> List[Dict]:
-        """Convert a GLThread or CombinedGLThread object to a format suitable for the OpenAI API."""
-        messages = []
-        if isinstance(thread, CombinedGLThread):
-            messages = thread.get_combined_conversation_messages()
-        else:
-            messages = thread.get_conversation_messages()
-
+    async def GLThread_to_OAI(self, thread: GLThread) -> List[Dict]:
+        """Convert a GLThread object to a format suitable for the OpenAI API."""
         return [
             {
                 "role": message.role,
                 "content": message.content,
             }
-            for message in messages
+            for message in thread.get_conversation_messages()
         ]

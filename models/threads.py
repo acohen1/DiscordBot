@@ -2,6 +2,7 @@ from collections import deque
 from datetime import datetime, timedelta
 from typing import Deque, Optional, Iterator, List
 import logging
+from clients.discord_client import DiscordClient
 
 logger = logging.getLogger('GLThread')
 
@@ -22,7 +23,7 @@ class GLMessage:
         self.target_message_id = target_message_id
 
     def __str__(self):
-        return f"{self.timestamp} - {self.message_id} - {self.role if self.role=="user" else "asst"} - {self.content[:250].strip()}"
+        return f"{self.timestamp.strftime('%Y-%m-%d %H:%M:%S')} - {self.message_id} - {self.role if self.role == 'user' else 'asst'} - {self.content[:100].strip()}"
     
     def __lt__(self, other):
         return self.timestamp < other.timestamp
@@ -69,6 +70,10 @@ class GLConversation:
 
     def get_messages(self) -> List[GLMessage]:
         return list(self.message_history)
+    
+    def contains_message(self, message_id: int) -> bool:
+        """Check if a message with the given message ID exists in the conversation."""
+        return any(msg.message_id == message_id for msg in self.message_history)
     
     def delete_message_by_id(self, message_id: int) -> bool:
         found = any(msg.message_id == message_id for msg in self.message_history)
@@ -139,6 +144,10 @@ class GLThread:
         except Exception as e:
             logger.error(f"Exception when adding message {message.message_id}: {e}")
             return False
+        
+    def contains_message(self, message_id: int) -> bool:
+        """Check if a message with the given message ID exists in the conversation."""
+        return self.conversation.contains_message(message_id)
 
     def delete_message_by_id(self, message_id: int) -> bool:
         """Delete a message in the conversation by its unique ID."""
@@ -174,7 +183,7 @@ class GLThread:
     def __str__(self) -> str:
         """String representation of the thread."""
         return (
-            f"Discord User ID: {self.discord_user_id}\n"
+            f"Discord User: {GLThread._get_member_name(DiscordClient().client, self.discord_user_id)}\n"
             f"Conversation:\n{self.conversation}"
         )
 
@@ -182,69 +191,11 @@ class GLThread:
         """Make the thread iterable over its conversation messages."""
         return iter(self.conversation)
     
-class CombinedGLThread:
-    def __init__(self, threads: list[GLThread]):
-        """A CombinedGLThread temporarily merges multiple GLThreads for context.
-        Args:
-            threads (list[GLThread]): A list of GLThreads to combine.
-        """
-        if not threads:
-            raise ValueError("At least one GLThread must be provided.")
-
-        # Store threads by user ID
-        self.threads_by_user = {
-            thread.discord_user_id: thread for thread in threads
-        }
-
-        # Create a combined conversation
-        self.conversation = GLConversation(
-            max_history_length=max(thread.conversation.message_history.maxlen for thread in threads)
-        )
-
-        # Combine messages from all threads
-        all_messages = []
-        for thread in threads:
-            all_messages.extend(thread.get_conversation_messages())
-
-        # Sort messages by timestamp
-        all_messages.sort(key=lambda msg: msg.timestamp)
-
-        # Add sorted messages to the combined conversation
-        for message in all_messages:
-            self.conversation.add_message(message)
-
-    def get_combined_conversation_messages(self) -> List[GLMessage]:
-        """
-        Retrieve the messages in the combined conversation.
-        Returns:
-            List[GLMessage]: The list of GLMessages in the combined conversation.
-        """
-        return self.conversation.get_messages()
-
-    def get_original_threads(self) -> list[GLThread]:
-        """
-        Retrieve the original threads that were merged.
-        Returns:
-            list[GLThread]: The list of original GLThreads.
-        """
-        return list(self.threads_by_user.values())
-
-    def get_user_ids(self) -> list[int]:
-        """
-        Retrieve the user IDs involved in this combined thread.
-        Returns:
-            list[int]: List of user IDs in the combined thread.
-        """
-        return list(self.threads_by_user.keys())
-
-    def __str__(self) -> str:
-        """String representation of the combined thread."""
-        user_threads = "\n".join(
-            f"User ID: {user_id}, Assistant Thread ID: {thread.assistant_thread_id}"
-            for user_id, thread in self.threads_by_user.items()
-        )
-        return (
-            f"Combined Thread:\n"
-            f"{user_threads}\n"
-            f"Conversation:\n{self.conversation}"
-        )
+    @staticmethod
+    def _get_member_name(client, user_id: int) -> str:
+        for guild in client.guilds:
+            member = guild.get_member(user_id)
+            if member:
+                return member.display_name
+        return str(user_id)
+    

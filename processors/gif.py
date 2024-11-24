@@ -1,6 +1,6 @@
 import threading
 from core.config import GIPHY_API_KEY, MAX_SEARCH_RESULTS
-from typing import List, Optional, Tuple, Dict
+from typing import List, Tuple, Dict
 from clients.openai_client import OpenAIClient
 from processors.img import ImageProcessor
 import aiohttp

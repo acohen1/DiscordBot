@@ -1,7 +1,6 @@
 import openai
 import threading
 from core.config import OPENAI_API_KEY, SYS_PROMPT, COT_MODEL_ID, MSG_MODEL_ID, IMG_MODEL_ID, COT_MODEL_TEMP, MSG_MODEL_TEMP, IMG_MODEL_TEMP
-from models.threads import GLMessage, GLThread
 import logging
 from typing import Optional, List, Dict
 import asyncio

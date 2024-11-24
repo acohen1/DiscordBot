@@ -1,6 +1,5 @@
 import discord
 from core.event_bus import emit_event, ON_READY, ON_MESSAGE, ON_REACTION_ADD, ON_PRESENCE_UPDATE
-from pydispatch import dispatcher
 from core.config import DISCORD_API_TOKEN
 import logging
 import threading

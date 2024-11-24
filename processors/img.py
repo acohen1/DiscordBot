@@ -1,7 +1,6 @@
 from core.config import IMG_MODEL_ID
 import threading
 from clients.openai_client import OpenAIClient
-import discord
 import base64
 import aiofiles
 import tempfile

@@ -7,7 +7,7 @@ from clients.discord_client import DiscordClient
 import discord
 from clients.openai_client import OpenAIClient
 import threading
-from typing import List, Optional, Set
+from typing import List, Optional
 
 # TODO: FIX THREAD INITIALIZATION FOR PROPER CHRONOLOGICAL ORDER
 # TODO: WE WILL ADD A 'TARGET_MESSAGE_ID' TO THE GLMESSAGE OBJECT TO TRACK THE MESSAGE THAT TRIGGERED THE BOT RESPONSE

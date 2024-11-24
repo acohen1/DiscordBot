@@ -5,7 +5,6 @@ from clients.openai_client import OpenAIClient
 import aiohttp
 from bs4 import BeautifulSoup
 import logging
-import re
 
 logger = logging.getLogger("WebProcessor")
 

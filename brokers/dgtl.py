@@ -2,12 +2,10 @@ from pydispatch import dispatcher
 import threading
 import discord
 from clients.discord_client import DiscordClient
-from models.threads import GLThread, CombinedGLThread
 from processors.msg import MessageProcessor
 from processors.cmd import CommandProcessor
 from core.cache import GLCache
 from core.event_bus import ON_MESSAGE, ON_READY, AWAITING_RESPONSE, emit_event
-from datetime import datetime, timezone, timedelta
 import asyncio
 import logging
 

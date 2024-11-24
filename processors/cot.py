@@ -1,7 +1,7 @@
 import logging
 from core.event_bus import  emit_event, AWAITING_RESPONSE, ON_RESPONSE_SENT
 from clients.openai_client import OpenAIClient
-from core.cache import GLCache, GLMessage
+from core.cache import GLCache
 from core.config import COT_MAX_ATTEMPTS, MSG_MAX_FOLLOWUPS
 from models.threads import GLThread
 from pydispatch import dispatcher

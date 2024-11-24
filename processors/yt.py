@@ -8,10 +8,10 @@ import logging
 import re
 import asyncio
 
-# TODO: Monitor YouTube video description length impacting assistant response
-# TODO: If the description is too long, we can summarize it with OpenAI's text summarizer
-# TODO: and replace the description with the summary in the assistant response
-# TODO: At the moment, we recursively process links in the description, which can lead to long responses
+# Add the ability to prioritize getting videos from:
+# 1. tonebone https://www.youtube.com/@tonebone740
+# 2. Gregg Limper https://www.youtube.com/@gregglimper864
+# 3. Brainfreeeeeze https://www.youtube.com/@Brainfreezzzzz
 
 logger = logging.getLogger("YouTubeProcessor")
 

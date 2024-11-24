@@ -69,23 +69,31 @@ class ChainOfThoughtPipeline:
                 emit_event(ON_RESPONSE_SENT)
             else:
                 logger.error(f"Failed to process message response for user {user_id}.")
-
+        
+        # GIF
         elif content_type == "gif":
             if await self._process_gif_response(user_id, user_channel, message, oai_messages):
                 emit_event(ON_RESPONSE_SENT)
             else:
                 logger.error(f"Failed to process GIF response for user {user_id}.")
 
+        # YouTube
         elif content_type == "youtube":
             logger.info(f"Content type is YouTube for user {user_id}.")
             if await self._process_youtube_response(user_id, user_channel, message, oai_messages):
                 emit_event(ON_RESPONSE_SENT)
             else:
                 logger.error(f"Failed to process YouTube response for user {user_id}.")
+
+        # Website
         elif content_type == "website":
             logger.info(f"Content type is website for user {user_id}.")
         # elif content_type == "research":
         #     pass
+
+        # Research
+        # elif content_type == "research":
+        # ....
 
     async def _process_message_response(self, user_id: int, user_channel: discord.TextChannel, message: discord.Message, user_thread: GLThread) -> bool:
         attempts = 0

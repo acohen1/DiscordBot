@@ -198,11 +198,18 @@ class OpenAIClient:
     async def determine_content_type(self, OAI_messages: List[Dict]) -> Optional[str]:
         """Given a list of OpenAI messages, determine the content type the assistant should respond with."""
         system_prompt = (
-            "Based on the most recent message, reply with one word that best describes the type of response that would be most relevant and helpful: 'message', 'GIF', 'YouTube', or 'Website'\n"
-            "Do not provide any additional text or explanations.\n"
-            "If the user asks for the latest news or current events, respond with 'Website'.\n"
-            "If a user responds with a Website, YouTube, or GIF, the bot should respond with a message.\n"
-            "**ONLY REPLY WITH ONE OF THE FOLLOWING WORDS:**: message, GIF, YouTube, or Website"
+            "Based on the most recent message, reply with one word that best describes the type of response that would be most relevant and helpful: 'message', 'GIF', 'YouTube', or 'Website'.\n\n"
+            "Rules:\n"
+            "1. If the user explicitly requests a GIF (e.g., 'send me a GIF', 'respond with a GIF', or 'can you find a funny GIF about this'), always respond with 'GIF'.\n"
+            "2. If the context suggests a reaction (e.g., something funny, shocking, or emotional), or if a GIF would add a playful or expressive touch to the conversation, respond with 'GIF'.\n"
+            "3. If the user explicitly mentions or responds to a Website, YouTube, or GIF, reply with 'message' to keep the conversation going.\n"
+            "4. If the user asks about current trends, popular culture, or something that benefits from links to explore further (like memes, articles, or viral topics), respond with 'Website'.\n"
+            "5. If the user mentions tutorials, music videos, or anything best explained or shared visually through video, respond with 'YouTube'.\n"
+            "6. For personal stories, advice, explanations, or recommendations, respond with 'message'.\n"
+            "6. For casual back-and-forth conversations, questions, or general replies that don’t clearly fit another type, respond with 'message'.\n\n"
+            "Important:\n"
+            "- Do not provide any additional text or explanations.\n"
+            "- **ONLY REPLY WITH ONE OF THE FOLLOWING WORDS:** message, GIF, YouTube, or Website."
         )
 
         affix_prompt = (
@@ -294,6 +301,45 @@ class OpenAIClient:
         except Exception as e:
             logger.error(f"Error processing search query: {e}")
             return None
+
+    async def is_followup_required(self, OAI_messages: List[Dict]) -> bool:
+        """Given a list of OpenAI messages, determine if a follow-up response is required."""
+        system_prompt = (
+            "Your purpose is to determine if a follow-up response is required based on the most recent messages.\n"
+            "Use the context of the conversation to determine if a follow-up is necessary.\n"
+            "Does the assistant's response require a follow-up message from the user?\n"
+            "Reply only with 'yes' or 'no' to indicate if a follow-up response is required."
+        )
+
+        affix_prompt = (
+            "Now determine if a follow-up response is required based on the most recent messages.\n"
+            "Only reply with 'yes' or 'no'."
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            *OAI_messages,
+            {"role": "user", "content": affix_prompt}
+        ]
+
+        # Send to OpenAI for a response
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.chain_of_thought_model_id,
+                messages=messages,
+                max_tokens=10,
+                temperature=self.chain_of_thought_temp
+            )
+            content = response.choices[0].message.content.strip().lower()
+            if content in ["yes", "no"]:
+                return content == "yes"
+            else:
+                logger.error(f"Invalid response content: {content}. Defaulting to 'no'.")
+                return False
+        except Exception as e:
+            logger.error(f"Error determining follow-up requirement: {e}")
+            return False
+
 
     # async def select_most_relevant_media(self, query: str, media_descriptions: List[str], OAI_messages: List[Dict]) -> int:
     #     """Given a search query and a list of media descriptions, select the index of the most relevant media description based on the recent conversation.

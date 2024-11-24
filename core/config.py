@@ -11,18 +11,18 @@ GIPHY_API_KEY = os.getenv("GIPHY_API_KEY")
 
 ASSISTANT_ID = os.getenv("ASSISTANT_ID")
 
-COT_MODEL_ID = os.getenv("COT_MODEL_ID")
+COT_MODEL_ID = os.getenv("COT_MODEL_ID")    # Used for decision making in handling conversations
 COT_MODEL_TEMP = 0.2
 COT_MAX_ATTEMPTS = 3
 
-MSG_MODEL_ID = os.getenv("MSG_MODEL_ID")
+MSG_MODEL_ID = os.getenv("MSG_MODEL_ID")    # Used for generating descriptions, search queries, etc. (Not for assistant responses, this is handled by the ASSISTANT API on the OAI dashboard)
 MSG_MODEL_TEMP = 0.8
 
-IMG_MODEL_ID = os.getenv("IMG_MODEL_ID")
+IMG_MODEL_ID = os.getenv("IMG_MODEL_ID")    # Used for generating image descriptions
 IMG_MODEL_TEMP = 0.5
 
 CACHE_CONVERSATIONS_LEN = 100
-CACHE_CONVERSATIONS_TIMELIMIT_MINS = 360
+CACHE_CONVERSATIONS_TIMELIMIT_MINS = 120
 CACHE_MESSAGE_LEN = 1000
 
 MAX_SEARCH_RESULTS = 5

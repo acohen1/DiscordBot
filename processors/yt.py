@@ -6,6 +6,7 @@ from clients.openai_client import OpenAIClient
 from processors.img import ImageProcessor
 import logging
 import re
+import asyncio
 
 # TODO: Monitor YouTube video description length impacting assistant response
 # TODO: If the description is too long, we can summarize it with OpenAI's text summarizer
@@ -119,17 +120,26 @@ class YouTubeProcessor:
             logger.error("Failed to search YouTube.")
             return None
         
-        # 2. Process each video's thumbnail and summarize the descriptions
-        for video in videos:
-            # Process each video's thumbnail
-            thumbnail_url = video.get("thumbnail_url")
-            video["thumbnail_description"] = await self.img_processor.describe_image(thumbnail_url) if thumbnail_url else "No Thumbnail Description Available"
-            
-            # Summarize the YT descriptions
-            description = video.get("description")
-            description = await self.openai_client.text_summarizer(description) if description else "No Description Available"
-
         logger.info(f"Found {len(videos)} videos.")
+
+        # 2. Process thumbnails and descriptions in parallel
+        thumbnail_tasks = [
+        self.img_processor.describe_image(video.get("thumbnail_url")) if video.get("thumbnail_url") else "No Thumbnail Description Available"
+        for video in videos
+        ]
+        description_tasks = [
+            self.openai_client.text_summarizer(video.get("description")) if video.get("description") else "No Description Available"
+            for video in videos
+        ]
+
+        # Wait for all tasks to complete
+        thumbnail_descriptions = await asyncio.gather(*thumbnail_tasks)
+        summarized_descriptions = await asyncio.gather(*description_tasks)
+        
+        # Update videos with results
+        for video, thumbnail_desc, summarized_desc in zip(videos, thumbnail_descriptions, summarized_descriptions):
+            video["thumbnail_description"] = thumbnail_desc
+            video["description"] = summarized_desc
 
         # 3. Process and select the most relevant video based on the OpenAI messages
         concat_descriptions = [f"{video.get('description')} {video.get('thumbnail_description')}" for video in videos]
@@ -187,7 +197,11 @@ class YouTubeProcessor:
         thumbnail_description = video.get("thumbnail_description") if video.get("thumbnail_description") else "No thumbnail description available"
         url = f"https://www.youtube.com/watch?v={video.get('video_id')}" if video.get("video_id") else "No URL available"
 
-        message_to_send = f"[{title}]({url})"
+        message_to_send = f"[{self.sanitize_text(title)}]({url})"
         message_to_cache = f"[YouTube ::: {title} ::: {author} ::: {description} ::: Thumbnail Description: {thumbnail_description}]"
         return message_to_send, message_to_cache
+    
+    def sanitize_text(text: str) -> str:
+        """Remove any character that could break Markdown formatting."""
+        return re.sub(r'[^\w\s.,!?:;\'"-]', '', text)
         

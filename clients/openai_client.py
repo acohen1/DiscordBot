@@ -128,7 +128,7 @@ class OpenAIClient:
             system_prompt = (
                 "Your purpose is to describe the content of a webpage based on its URL.\n\n"
                 "Extract any details you can from the names, titles, and descriptions in the URL.\n\n"
-                "Provide a concise, succint summary of the content that would be useful for someone who can't access the page."
+                "Provide a concise, succint, one-to-two sentence summary of the content that would be useful for someone who can't access the page."
             )
 
             user_prompt = (
@@ -141,7 +141,7 @@ class OpenAIClient:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                max_tokens=100,
+                max_tokens=50,
                 temperature=self.message_model_temp
             )
             summary = response.choices[0].message.content.strip() if response.choices else "No summary available"
@@ -307,8 +307,8 @@ class OpenAIClient:
             logger.error(f"Error determining follow-up requirement: {e}")
             return False
 
-    async def select_most_relevant_yt(self, query: str, media_descriptions: List[str], OAI_messages: List[Dict]) -> int:
-        """Given a search query and a list of youtube descriptions, select the index of the most relevant media description based on the recent conversation.
+    async def select_most_relevant_media(self, query: str, media_descriptions: List[str], OAI_messages: List[Dict]) -> int:
+        """Given a search query and a list of media descriptions, select the index of the most relevant media description based on the recent conversation.
         Args:
             query (str): The search query used to find the media.
             media_descriptions (List[str]): The list of media descriptions to choose from.

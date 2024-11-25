@@ -143,7 +143,7 @@ class YouTubeProcessor:
 
         # 3. Process and select the most relevant video based on the OpenAI messages
         concat_descriptions = [f"{video.get('description')} {video.get('thumbnail_description')}" for video in videos]
-        best_video_idx = await self.openai_client.select_most_relevant_yt(keyword, concat_descriptions, oai_messages)
+        best_video_idx = await self.openai_client.select_most_relevant_media(keyword, concat_descriptions, oai_messages)
         best_video = videos[best_video_idx]
 
         # 4. Format the selected video message to send and cache

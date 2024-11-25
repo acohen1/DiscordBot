@@ -4,7 +4,7 @@ from core.config import OPENAI_API_KEY, setup_logging
 from core.cache import GLCache
 from clients.discord_client import DiscordClient
 from clients.openai_client import OpenAIClient
-from services.dgtl import DTGLBroker
+from services.dtgl import DTGLBroker
 from services.cot import ChainOfThoughtPipeline
 from core.event_bus import emit_event, ON_READY, ON_MESSAGE, ON_REACTION_ADD, ON_PRESENCE_UPDATE
 

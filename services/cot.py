@@ -8,6 +8,7 @@ from pydispatch import dispatcher
 from processors.msg import MessageProcessor
 from processors.gif import GIFProcessor
 from processors.yt import YouTubeProcessor
+from processors.web import WebProcessor
 import discord
 from clients.discord_client import DiscordClient
 import asyncio
@@ -28,6 +29,7 @@ class ChainOfThoughtPipeline:
         self.message_processor = MessageProcessor()
         self.gif_processor = GIFProcessor()
         self.youtube_processor = YouTubeProcessor()
+        self.web_processor = WebProcessor()
         dispatcher.connect(self._on_pipeline_wrapper, signal=AWAITING_RESPONSE)
 
     def _on_pipeline_wrapper(self, message: discord.Message):
@@ -88,8 +90,8 @@ class ChainOfThoughtPipeline:
         # Website
         elif content_type == "website":
             logger.info(f"Content type is website for user {user_id}.")
-        # elif content_type == "research":
-        #     pass
+            if await self._process_web_response(user_id, user_channel, message, oai_messages):
+                emit_event(ON_RESPONSE_SENT)
 
         # Research
         # elif content_type == "research":
@@ -198,4 +200,29 @@ class ChainOfThoughtPipeline:
                 return False
 
         logger.info(f"Successfully sent YouTube video to user {user_id}")
+        return True
+    
+    async def _process_web_response(self, user_id: int, user_channel: discord.TextChannel, message: discord.Message, oai_messages: List[Dict]) -> bool:
+        """Handle website content response from the assistant.
+        Args:
+            user_id (int): The user's Discord ID.
+            user_channel (discord.TextChannel): The user's Discord channel.
+            message (discord.Message): The user's message.
+            oai_messages (List[Dict]): The user's messages in OpenAI
+        Returns:
+            bool: True if the website was sent successfully, False otherwise.
+        """
+        search_query = await self.openai_client.generate_search_query("website", oai_messages)
+        message_to_send, message_to_cache = await self.web_processor.search_by_keyword(search_query, oai_messages)
+        if not message_to_send:
+            logger.error(f"Failed to find website for user {user_id}")
+            return False
+        discord_msg = await user_channel.send(message_to_send, reference=message)
+        if discord_msg:
+            discord_msg.content = message_to_cache
+            if not await self.cache.add_discord_message(discord_msg):
+                logger.error(f"Failed to add website to GLThread for user {user_id}.")
+                return False
+            
+        logger.info(f"Successfully sent website to user {user_id}")
         return True

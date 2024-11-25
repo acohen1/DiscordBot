@@ -16,7 +16,7 @@ COT_MAX_ATTEMPTS = 3
 
 MSG_MODEL_ID = os.getenv("MSG_MODEL_ID")    # Used for generating descriptions, search queries, etc. (Not for assistant responses, this is handled by the ASSISTANT API on the OAI dashboard)
 MSG_MODEL_TEMP = 0.8
-MSG_MAX_FOLLOWUPS = 3
+MSG_MAX_FOLLOWUPS = 5
 SYS_PROMPT = PROMPT
 
 IMG_MODEL_ID = os.getenv("IMG_MODEL_ID")    # Used for generating image descriptions
@@ -25,6 +25,8 @@ IMG_MODEL_TEMP = 0.5
 CACHE_CONVERSATIONS_LEN = 100
 CACHE_CONVERSATIONS_TIMELIMIT_MINS = 120
 CACHE_MESSAGE_LEN = 1000
+
+SEARCH_ENGINE_ID = os.getenv("SEARCH_ENGINE_ID")
 
 MAX_SEARCH_RESULTS = 5
 
@@ -42,6 +44,8 @@ if not MSG_MODEL_ID:
     raise ValueError("MSG_MODEL_ID is not set in .env")
 if not IMG_MODEL_ID:
     raise ValueError("IMG_MODEL_ID is not set in .env")
+if not SEARCH_ENGINE_ID:
+    raise ValueError("SEARCH_ENGINE_ID is not set in .env")
 
 # Centralized logging configuration
 def setup_logging(level=logging.INFO):

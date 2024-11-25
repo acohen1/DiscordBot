@@ -128,6 +128,7 @@ class OpenAIClient:
             system_prompt = (
                 "Your purpose is to describe the content of a webpage based on its URL.\n\n"
                 "Extract any details you can from the names, titles, and descriptions in the URL.\n\n"
+                "While you can't access the page, make an educated guess based on the URL itself.\n\n"
                 "Provide a concise, succint, one-to-two sentence summary of the content that would be useful for someone who can't access the page."
             )
 
@@ -136,13 +137,13 @@ class OpenAIClient:
                 "Description:"
             )
             response = await self.client.chat.completions.create(
-                model=self.message_model_id,
+                model=self.chain_of_thought_model_id,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
                 max_tokens=50,
-                temperature=self.message_model_temp
+                temperature=self.chain_of_thought_temp
             )
             summary = response.choices[0].message.content.strip() if response.choices else "No summary available"
             return summary

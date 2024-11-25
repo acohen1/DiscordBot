@@ -26,8 +26,6 @@ CACHE_CONVERSATIONS_LEN = 100
 CACHE_CONVERSATIONS_TIMELIMIT_MINS = 120
 CACHE_MESSAGE_LEN = 1000
 
-SEARCH_ENGINE_ID = os.getenv("SEARCH_ENGINE_ID")
-
 MAX_SEARCH_RESULTS = 5
 
 if not DISCORD_API_TOKEN:
@@ -44,8 +42,6 @@ if not MSG_MODEL_ID:
     raise ValueError("MSG_MODEL_ID is not set in .env")
 if not IMG_MODEL_ID:
     raise ValueError("IMG_MODEL_ID is not set in .env")
-if not SEARCH_ENGINE_ID:
-    raise ValueError("SEARCH_ENGINE_ID is not set in .env")
 
 # Centralized logging configuration
 def setup_logging(level=logging.INFO):

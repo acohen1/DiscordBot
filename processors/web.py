@@ -1,11 +1,10 @@
 import threading
-from core.config import GOOGLE_API_KEY, MAX_SEARCH_RESULTS, SEARCH_ENGINE_ID
+from core.config import MAX_SEARCH_RESULTS
 from typing import List, Tuple, Dict
 from clients.openai_client import OpenAIClient
 import aiohttp
 from bs4 import BeautifulSoup
 import logging
-import asyncio
 from duckduckgo_search import AsyncDDGS
 
 logger = logging.getLogger("WebProcessor")
@@ -83,14 +82,13 @@ class WebProcessor:
                     description = description_meta.get('content').strip() if description_meta and description_meta.get('content') else "No Description Available"
 
                     # Extract main page content (e.g., <p> tags)
-                    paragraphs = soup.find_all("p")
-                    list_items = soup.find_all("li")
-
-                    # Combine text from paragraphs and list items
+                    content_tags = soup.find_all([
+                    "p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "pre", "span"
+                    ])
+                
+                    # Combine text from these tags
                     page_content = "\n".join(
-                        p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True)
-                    ) + "\n" + "\n".join(
-                        li.get_text(strip=True) for li in list_items if li.get_text(strip=True)
+                        tag.get_text(strip=True) for tag in content_tags if tag.get_text(strip=True)
                     )
 
                     # Fallback if no readable content

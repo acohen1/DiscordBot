@@ -52,8 +52,9 @@ class MessageProcessor:
         # 1. Replace mentions with the users' name
         processed_message = self._replace_mentions(processed_message)
 
-        # 2. Process links
-        processed_message = await self._process_links(processed_message)
+        # 2. Process links from users
+        if message.author != self.discord_client.user:
+            processed_message = await self._process_links(processed_message)
 
         # 3. Process image content
         for attachment in message.attachments:

@@ -74,7 +74,7 @@ class CommandProcessor:
                 return command, args
         return None, None
 
-    async def _handle_lobotomy(self, message: discord.Message, threads: dict):
+    async def _handle_lobotomy(self, message: discord.Message, threads: dict, *args):
         """
         Handle the /lobotomy command to clear a user's conversation.
 
@@ -89,6 +89,15 @@ class CommandProcessor:
                 return
 
             logger.info(f"Received /lobotomy command from {message.author.name} in {message.channel.name}.")
+
+            # Check for --all argument flag; clear conversations for all users
+            if args and args[0] == "--all":
+                for user_id in threads.keys():
+                    threads[user_id].clear_conversation()
+                logger.info("Cleared all threads.")
+                await message.channel.send("**ALL** gone <:brainlet:1300560937778155540>")
+                return
+
 
             # Clear the conversation
             is_cleared = threads[user_id].clear_conversation()

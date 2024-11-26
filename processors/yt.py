@@ -13,6 +13,10 @@ import asyncio
 # 2. Gregg Limper https://www.youtube.com/@gregglimper864
 # 3. Brainfreeeeeze https://www.youtube.com/@Brainfreezzzzz
 
+
+# Youtube transcript processing to add on to the youtube description.
+# We can get the transcript -> summarize with OpenAI -> add to the description.
+
 logger = logging.getLogger("YouTubeProcessor")
 
 class YouTubeProcessor:
@@ -105,14 +109,16 @@ class YouTubeProcessor:
     # ------------------ YOUTUBE KEYWORD SEARCH ------------------
 
     async def search_by_keyword(self, keyword: str, oai_messages: List[dict]) -> Tuple[str, str]:
-        """Process a YouTube keyword search and select the most relevant video based on the given OpenAI messages.
+        """
+        Process a YouTube keyword search and select the most relevant video based on the given OpenAI messages.
+        
         Args:
             keyword (str): The keyword to search for.
             oai_messages (List[dict]): The user's GLThread converted to OpenAI messages.
+            
         Returns:
             Tuple[str, str]: A tuple containing the message to send and cache.
         """
-
         # 1. Search YouTube for the keyword
         logger.info(f"Searching YouTube for '{keyword}'...")
         videos = await self._search_youtube(keyword)
@@ -123,19 +129,25 @@ class YouTubeProcessor:
         logger.info(f"Found {len(videos)} videos.")
 
         # 2. Process thumbnails and descriptions in parallel
+        # Process thumbnail descriptions
         thumbnail_tasks = [
-        self.img_processor.describe_image(video.get("thumbnail_url")) if video.get("thumbnail_url") else "No Thumbnail Description Available"
-        for video in videos
+            self.img_processor.describe_image(video.get("thumbnail_url"))
+            if video.get("thumbnail_url")
+            else self._async_no_thumbnail_description()
+            for video in videos
         ]
+        # Process video descriptions
         description_tasks = [
-            self.openai_client.text_summarizer(video.get("description")) if video.get("description") else "No Description Available"
+            self.openai_client.text_summarizer(video.get("description"))
+            if video.get("description")
+            else self._async_no_video_description()
             for video in videos
         ]
 
         # Wait for all tasks to complete
         thumbnail_descriptions = await asyncio.gather(*thumbnail_tasks)
         summarized_descriptions = await asyncio.gather(*description_tasks)
-        
+
         # Update videos with results
         for video, thumbnail_desc, summarized_desc in zip(videos, thumbnail_descriptions, summarized_descriptions):
             video["thumbnail_description"] = thumbnail_desc
@@ -148,6 +160,14 @@ class YouTubeProcessor:
 
         # 4. Format the selected video message to send and cache
         return self._format_video_message(best_video)
+
+    # Helper methods for fallbacks
+    async def _async_no_thumbnail_description(self):
+        return "No Thumbnail Description Available"
+
+    async def _async_no_video_description(self):
+        return "No Description Available"
+
 
     async def _search_youtube(self, keyword: str) -> List[dict]:
         """Search YouTube and return a list of video details.

@@ -109,13 +109,13 @@ class OpenAIClient:
                 "Summary:"
             )
             response = await self.client.chat.completions.create(
-                model=self.message_model_id,
+                model=self.chain_of_thought_model_id,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
                 max_tokens=100,
-                temperature=self.message_model_temp
+                temperature=self.chain_of_thought_temp
             )
             summary = response.choices[0].message.content.strip() if response.choices else "No summary available"
             return summary
@@ -154,23 +154,24 @@ class OpenAIClient:
     async def determine_content_type(self, OAI_messages: List[Dict]) -> Optional[str]:
         """Given a list of OpenAI messages, determine the content type the assistant should respond with."""
         system_prompt = (
-            "Based on the most recent message, reply with one word that best describes the type of response that would be most relevant and helpful: 'message', 'GIF', 'YouTube', or 'Website'.\n\n"
+            "Based on the most recent message, reply with one word that best describes the type of response that would be most relevant and helpful: 'message', 'GIF', 'research', 'youtube', or 'website'.\n\n"
             "Rules:\n"
             "1. If the user explicitly requests a GIF (e.g., 'send me a GIF', 'respond with a GIF', or 'can you find a funny GIF about this'), always respond with 'GIF'.\n"
             "2. If the context suggests a reaction (e.g., something funny, shocking, or emotional), or if a GIF would add a playful or expressive touch to the conversation, respond with 'GIF'.\n"
-            "3. If the user explicitly mentions or responds to a Website, YouTube, or GIF, reply with 'message' to keep the conversation going.\n"
-            "4. If the user asks about current trends, popular culture, or something that benefits from links to explore further (like memes, articles, or viral topics), respond with 'Website'.\n"
-            "5. If the user mentions tutorials, music videos, or anything best explained or shared visually through video, respond with 'YouTube'.\n"
-            "6. For personal stories, advice, explanations, or recommendations, respond with 'message'.\n"
-            "6. For casual back-and-forth conversations, questions, or general replies that don’t clearly fit another type, respond with 'message'.\n\n"
+            "3. If the user explicitly requests a YouTube video (e.g., 'find a YouTube video', 'show me a video about this', or 'send me a tutorial video'), respond with 'youtube'.\n"
+            "4. If the user explicitly requests a website (e.g., 'find me a website', 'show me an article', or 'look up a site about this'), respond with 'website'.\n"
+            "5. If the user asks about lore, strategies, metas, guides, current topics, tutorials, popular culture, articles, explanations of trends, or anything that would benefit from additional context or in-depth information, respond with 'research'.\n"
+            "6. For personal stories, advice, explanations, casual back-and-forth conversations, or general replies that don’t clearly fit another type, respond with 'message'.\n\n"
             "Important:\n"
+            "- The default response type is 'message' if none of the above criteria apply.\n"
             "- Do not provide any additional text or explanations.\n"
-            "- **ONLY REPLY WITH ONE OF THE FOLLOWING WORDS:** message, GIF, YouTube, or Website."
+            "- **ONLY REPLY WITH ONE OF THE FOLLOWING WORDS:** message, GIF, research, youtube, or website."
         )
 
         affix_prompt = (
-            "Now determine the content type of your response: message, GIF, YouTube, or Website."
+            "Now determine the content type of your response: message, GIF, research, youtube, or website."
         )
+        
         # Prefix the messages with the system prompt
         messages = [
             {"role": "system", "content": system_prompt},
@@ -188,18 +189,30 @@ class OpenAIClient:
             )
             content_type = response.choices[0].message.content.strip().lower()
 
-            if content_type in ["message", "gif", "youtube", "website"]:
+            if content_type in ["message", "gif", "research", "youtube", "website"]:
                 return content_type
             else:
-                logger.error(f"Invalid content type '{content_type}")
-                return None
-        
+                logger.error(f"Invalid content type '{content_type}'")
+                return "message"  # Default to 'message' on invalid output
+                
         except Exception as e:
             logger.error(f"Error determining content type: {e}")
-            return None
+            return "message"  # Default to 'message' on error
 
-    async def generate_message_response(self, OAI_messages: List[Dict]) -> Optional[str]:
+    async def generate_message_response(self, OAI_messages: List[Dict], research_note=None) -> Optional[str]:
+        """Given a list of OpenAI messages, generate a response based on the conversation context.
+        Args:
+            OAI_messages (List[Dict]): The list of messages to provide to OpenAI.
+            research_note (Optional[str]): A research note to include in the response.
+        Returns:
+            Optional[str]: The response generated by OpenAI or None if an error occurs.
+        """
         prefix_prompt = SYS_PROMPT
+        if research_note:
+            prefix_prompt += (
+                "\n\n**With the information given in the research note, it is imperative that you provide a response to the last user "
+                "message that is both accurate and informative.**"
+            )
 
         # affix_prompt = (
         #     "Now generate a response based on the most recent messages."
@@ -210,6 +223,10 @@ class OpenAIClient:
             *OAI_messages,
         ]
 
+        if research_note:
+            messages.append({"role": "system", "content": research_note})
+            messages.append({"role": "user", "content": "You must now answer the user's query based on the research note and your own knowledge."})
+            
         # Send to OpenAI for a response
         try:
             response = await self.client.chat.completions.create(
@@ -224,35 +241,43 @@ class OpenAIClient:
             return None
 
     async def generate_search_query(self, content_type: str, OAI_messages: List[Dict]) -> Optional[str]:
-        """Given a content type, request a search query from OpenAI based on the provided messages.
+        """
+        Generate a search query tailored to the specified content type.
+        
         Args:
-            content_type (str): The content type to search for: 'message', 'gif', 'youtube', or 'website'.
+            content_type (str): The content type to search for: 'gif', 'youtube', 'website', or 'research'.
             OAI_messages (List[Dict]): The list of messages to provide to OpenAI.
+            
         Returns:
             Optional[str]: The search query response from OpenAI or None if an error occurs.
         """
-        if content_type == "gif":
-            search_type = "GIF"
-        elif content_type == "youtube":
-            search_type = "YouTube video"
-        elif content_type == "website":
-            search_type = "website"
-
+        # Map content types to their respective search purposes
+        search_type_map = {
+            "gif": "a GIF",
+            "youtube": "a YouTube video",
+            "website": "a website",
+            "research": "information, guides, lore, strategies, metas, or insights"
+        }
+        
+        # Default to generic search if the content type is unexpected
+        search_type = search_type_map.get(content_type, "information")
+        
+        # Construct dynamic prompts based on content type
         prefix_prompt = (
-            "Your purpose is to generate a search query based on the most recent messages.\n"
-            "Use the context of the conversation to determine the most relevant search query.\n"
-            "Limit the query length to ensure clarity and relevance in a response.\n"
-            "Do not directly copy the user's message, but use it to generate a relevant search query.\n"
-            f"You are searching for a {search_type} based on the most recent messages."
-            "Reply only with the search query, do not include any additional text, links, media, or explanations.\n"
+            f"Your purpose is to generate a search query based on the most recent messages.\n"
+            f"Use the context of the conversation to determine the most relevant search query.\n"
+            f"Limit the query length to ensure clarity and relevance in a response.\n"
+            f"Do not directly copy the user's message, but use it to generate a relevant search query.\n"
+            f"You are searching for {search_type} based on the most recent messages.\n"
+            f"Reply only with the search query, do not include any additional text, links, media, or explanations.\n"
         )
 
         affix_prompt = (
-            f"Now generate a search query for a {search_type} based on the most recent messages."
+            f"Now generate a search query for {search_type} based on the most recent messages."
         )
 
         messages = [
-            {"role": "system", "content" : prefix_prompt},
+            {"role": "system", "content": prefix_prompt},
             *OAI_messages,
             {"role": "user", "content": affix_prompt}
         ]

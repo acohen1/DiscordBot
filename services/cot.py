@@ -3,7 +3,7 @@ from core.event_bus import  emit_event, AWAITING_RESPONSE, ON_RESPONSE_SENT
 from clients.openai_client import OpenAIClient
 from core.cache import GLCache
 from core.config import COT_MAX_ATTEMPTS, MSG_MAX_FOLLOWUPS
-from models.threads import GLThread
+from models.threads import GLThread, GLMessage
 from pydispatch import dispatcher
 from processors.msg import MessageProcessor
 from processors.gif import GIFProcessor
@@ -13,6 +13,7 @@ import discord
 from clients.discord_client import DiscordClient
 import asyncio
 from typing import List, Dict
+from datetime import datetime, timezone
 
 logger = logging.getLogger("ChainOfThoughtPipeline")
 
@@ -67,7 +68,7 @@ class ChainOfThoughtPipeline:
 
         # 3. Process content based on type
         if content_type == "message":
-            if await self._process_message_response(user_id, user_channel, message, user_thread):
+            if await self._process_message_response(user_id, user_channel, message, oai_messages):
                 emit_event(ON_RESPONSE_SENT)
             else:
                 logger.error(f"Failed to process message response for user {user_id}.")
@@ -94,15 +95,18 @@ class ChainOfThoughtPipeline:
                 emit_event(ON_RESPONSE_SENT)
 
         # Research
-        # elif content_type == "research":
-        # ....
+        elif content_type == "research":
+            logger.info(f"Content type is research for user {user_id}.")
+            if await self._begin_resarch_pipeline(user_id, user_channel, message, oai_messages):
+                emit_event(ON_RESPONSE_SENT)
 
-    async def _process_message_response(self, user_id: int, user_channel: discord.TextChannel, message: discord.Message, user_thread: GLThread) -> bool:
+    # ------------------ Response Handling ------------------
+
+    async def _process_message_response(self, user_id: int, user_channel: discord.TextChannel, message: discord.Message, oai_messages: List[Dict]) -> bool:
         attempts = 0
         sent_msg_count = 0
         while attempts < COT_MAX_ATTEMPTS and sent_msg_count < MSG_MAX_FOLLOWUPS:
             # 1. Request OpenAI response
-            oai_messages = await self.message_processor.GLThread_to_OAI(user_thread)
             response = await self.openai_client.generate_message_response(oai_messages)
             if not response:
                 logger.error(f"Attempt {attempts + 1}: Failed to get response for user {user_id}. Retrying.")
@@ -110,11 +114,6 @@ class ChainOfThoughtPipeline:
                 attempts += 1
                 continue
             
-            # # Remove "Gregg Limper: " from the response if it appears
-            # if response.startswith("Gregg Limper: "):
-            #     logger.info(f"Removing prefix from bot response...")
-            #     response = response.replace("Gregg Limper: ", "")
-
             # TODO: Fix for current processor.msg implementation; still monitoring for user prefixes
             # Remove ANY user prefix from the response if it appears
             for member in user_channel.members:
@@ -142,6 +141,7 @@ class ChainOfThoughtPipeline:
             logger.info(f"Added response to GLThreads")
 
             # 4. Check if the response needs a follow-up
+            user_thread = self.cache.threads[user_id]
             updated_oai_messages = await self.message_processor.GLThread_to_OAI(user_thread)
             if not await self.openai_client.is_followup_required(updated_oai_messages):
                 logger.info(f"No follow-up required for user {user_id}.")
@@ -176,7 +176,7 @@ class ChainOfThoughtPipeline:
             
         logger.info(f"Successfully sent GIF to user {user_id}")
         return True
-    
+            
     async def _process_youtube_response(self, user_id: int, user_channel: discord.TextChannel, message: discord.Message, oai_messages: List[Dict]) -> bool:
         """Handle YouTube content response from the assistant.
         Args:
@@ -225,4 +225,55 @@ class ChainOfThoughtPipeline:
                 return False
             
         logger.info(f"Successfully sent website to user {user_id}")
+        return True
+    
+    async def _begin_resarch_pipeline(self, user_id: int, user_channel: discord.TextChannel, message: discord.Message, oai_messages: List[Dict]) -> bool:
+        logger.info(f"Starting research pipeline for user {self.discord_client.get_user(user_id).display_name}")
+
+        # 1. Generate a research query
+        logger.info("Generating research query...")
+        search_query = await self.openai_client.generate_search_query("research", oai_messages)
+        if not search_query:
+            logger.error(f"Failed to generate research query for user {user_id}")
+            return False
+        
+        # 2. Search the web and YouTube for information
+        logger.info("Searching the web for information...")
+        _, research_to_cache = await self.web_processor.search_by_keyword(search_query, oai_messages)
+        if not research_to_cache:
+            logger.error(f"Failed to find information for user {user_id}")
+            return False
+
+        logger.info("Searching youtube for information...")
+        _, video_to_cache = await self.youtube_processor.search_by_keyword(search_query, oai_messages)
+        if not video_to_cache:
+            logger.error(f"Failed to find YouTube video for user {user_id}")
+            return False
+
+        # 3. Create the research note
+        research_note = f"**Research Summary**: {research_to_cache}\n\nYouTube Video: {video_to_cache}"
+
+        # TODO: Monitor if we should add the research note as a 'assistant' message in the GLThread,
+        # At the moment, it's only temporary for the informed response
+
+        # 4. Generate an informed response from OpenAI
+        logger.info("Generating informed response...")
+        response = await self.openai_client.generate_message_response(oai_messages, research_note=research_note)
+        if not response:
+            logger.error(f"Failed to generate informed response for user {user_id}")
+            return False
+
+        # 5. Send the bot's response to the user
+        logger.info("Sending informed response to user...")
+        sent_message = await user_channel.send(response, reference=message)
+        if not sent_message:
+            logger.error(f"Failed to send informed response for user {user_id}")
+            return False
+        
+        # 3. Add the bot's message to all necessary GLThreads
+        gl_msg = await self.cache.add_discord_message(sent_message)
+        if not gl_msg:
+            logger.error(f"Failed to add response to GLThread for user {user_id}. Aborting.")
+            return False
+        logger.info(f"Added response to GLThreads")
         return True

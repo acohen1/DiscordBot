@@ -158,5 +158,5 @@ class GIFProcessor:
             Tuple[str, str]: A tuple containing the message to send and cache.
         """
         message_to_send = gif.get("url")
-        message_to_cache = f"[GIF ::: {gif.get("title")} ::: {gif.get("description")}]"
+        message_to_cache = f"[GIF ::: {gif.get('title')} ::: {gif.get('description')}]"
         return message_to_send, message_to_cache

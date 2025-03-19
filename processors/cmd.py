@@ -64,6 +64,7 @@ class CommandProcessor:
             Tuple[str, List[str]]: The command name and arguments if a command is detected, else (None, None).
         """
         bot_id = message.guild.me.id
+        # TODO: We must also handle the case where the bot is the reply target, not just mentioned in the message
         if message.content.startswith(f"<@{bot_id}>"):
             # Extract command and arguments
             command_body = message.content[len(f"<@{bot_id}>"):].strip()

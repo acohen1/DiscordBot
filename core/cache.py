@@ -101,7 +101,7 @@ class GLCache:
             if user_id not in self.threads:
                 self.threads[user_id] = GLThread(user_id, max_history_length=CACHE_CONVERSATIONS_LEN)
 
-       # Step 4: Add all messages in the thread to each participant's thread
+       # Step 4: Add all messages in the shared thread to each participant's unique thread
         for author, gl_message in full_thread:
             for user_id in participating_user_ids:
                 target_thread = self.threads.get(user_id)

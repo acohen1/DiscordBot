@@ -22,6 +22,9 @@ SYS_PROMPT = PROMPT
 IMG_MODEL_ID = os.getenv("IMG_MODEL_ID")    # Used for generating image descriptions
 IMG_MODEL_TEMP = 0.5
 
+WEB_MODEL_ID = os.getenv("WEB_MODEL_ID")    # Used for generating web search queries
+WEB_MODEL_TEMP = 0.8
+
 CACHE_CONVERSATIONS_LEN = 100
 CACHE_CONVERSATIONS_TIMELIMIT_MINS = 120
 CACHE_MESSAGE_LEN = 1000

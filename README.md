@@ -1,4 +1,4 @@
-# GreggLimper — Discord LLM Assistant 🤖🧠
+# Discord LLM Assistant 🤖🧠
 
 A modular, LLM-powered Discord assistant built with OpenAI, structured message handling, and chain-of-thought reasoning.
 
